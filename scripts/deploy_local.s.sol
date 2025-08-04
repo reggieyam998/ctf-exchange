@@ -10,6 +10,7 @@ import { IConditionalTokens } from "src/exchange/interfaces/IConditionalTokens.s
 import { ExchangeBeacon } from "src/dev/mocks/ExchangeBeacon.sol";
 import { BeaconProxyFactory } from "src/dev/mocks/BeaconProxyFactory.sol";
 import { MockBeaconImplementation } from "src/dev/mocks/MockBeaconImplementation.sol";
+import { MockGnosisSafeFactory } from "src/dev/mocks/MockGnosisSafeFactory.sol";
 
 /// @title LocalDeployment
 /// @notice Script to deploy CTF Exchange for local development
@@ -26,6 +27,7 @@ contract LocalDeployment is Script {
     MockBeaconImplementation public mockImpl;
     ExchangeBeacon public beacon;
     BeaconProxyFactory public beaconFactory;
+    MockGnosisSafeFactory public safeFactory;
     CTFExchange public exchange;
 
     function run() public {
@@ -59,12 +61,17 @@ contract LocalDeployment is Script {
         beaconFactory = new BeaconProxyFactory(address(beacon), adminAddress);
         console.log("Beacon Proxy Factory deployed at:", address(beaconFactory));
 
-        // 6. Deploy CTF Exchange (with beacon proxy factory)
+        // 6. Deploy Mock Gnosis Safe Factory
+        address mockMasterCopy = address(0x1234567890123456789012345678901234567890); // Placeholder
+        safeFactory = new MockGnosisSafeFactory(mockMasterCopy);
+        console.log("Mock Gnosis Safe Factory deployed at:", address(safeFactory));
+
+        // 7. Deploy CTF Exchange (with beacon proxy factory and safe factory)
         exchange = new CTFExchange(
             address(usdc),           // collateral
             address(ctf),            // ctf
             address(beaconFactory),  // proxyFactory (beacon-based)
-            address(0)               // safeFactory (placeholder for now)
+            address(safeFactory)      // safeFactory (mock for local development)
         );
         console.log("CTF Exchange deployed at:", address(exchange));
 
@@ -94,6 +101,7 @@ contract LocalDeployment is Script {
         console.log("Mock Beacon Implementation address:", address(mockImpl));
         console.log("Exchange Beacon address:", address(beacon));
         console.log("Beacon Proxy Factory address:", address(beaconFactory));
+        console.log("Mock Gnosis Safe Factory address:", address(safeFactory));
         console.log("Exchange address:", address(exchange));
         
         // Verify exchange configuration

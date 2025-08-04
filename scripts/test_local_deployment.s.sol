@@ -10,6 +10,7 @@ import { IConditionalTokens } from "src/exchange/interfaces/IConditionalTokens.s
 import { ExchangeBeacon } from "src/dev/mocks/ExchangeBeacon.sol";
 import { BeaconProxyFactory } from "src/dev/mocks/BeaconProxyFactory.sol";
 import { MockBeaconImplementation } from "src/dev/mocks/MockBeaconImplementation.sol";
+import { MockGnosisSafeFactory } from "src/dev/mocks/MockGnosisSafeFactory.sol";
 
 /// @title TestLocalDeployment
 /// @notice Comprehensive test script for local deployment with beacon proxy system
@@ -25,6 +26,7 @@ contract TestLocalDeployment is Script {
     MockBeaconImplementation public mockImpl;
     ExchangeBeacon public beacon;
     BeaconProxyFactory public beaconFactory;
+    MockGnosisSafeFactory public safeFactory;
     CTFExchange public exchange;
 
     function run() public {
@@ -60,22 +62,27 @@ contract TestLocalDeployment is Script {
         beaconFactory = new BeaconProxyFactory(address(beacon), adminAddress);
         console.log("Beacon Proxy Factory deployed at:", address(beaconFactory));
 
-        // 6. Deploy CTF Exchange
+        // 6. Deploy Mock Gnosis Safe Factory
+        address mockMasterCopy = address(0x1234567890123456789012345678901234567890); // Placeholder
+        safeFactory = new MockGnosisSafeFactory(mockMasterCopy);
+        console.log("Mock Gnosis Safe Factory deployed at:", address(safeFactory));
+
+        // 7. Deploy CTF Exchange
         exchange = new CTFExchange(
             address(usdc),           // collateral
             address(ctf),            // ctf
             address(beaconFactory),  // proxyFactory (beacon-based)
-            address(0)               // safeFactory (placeholder for now)
+            address(safeFactory)      // safeFactory (mock for local development)
         );
         console.log("CTF Exchange deployed at:", address(exchange));
 
-        // 7. Configure exchange with admin roles
+        // 8. Configure exchange with admin roles
         exchange.addAdmin(adminAddress);
         exchange.addOperator(adminAddress);
 
         vm.stopBroadcast();
 
-        // 8. Run comprehensive tests
+        // 9. Run comprehensive tests
         _testDeploymentVerification(adminAddress);
         _testCTFFunctionality();
         _testBeaconProxySystem();
