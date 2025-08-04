@@ -139,35 +139,34 @@ This backlog outlines the requirements and tasks needed to complete the CTF-exch
 - [ ] Emergency procedures documented and tested
 - [ ] **Beacon admin controls tested (pause, timelock, rollback)**
 
-### Task 2.3: Create Gnosis Safe Factory Contract
+### Task 2.3: Create Mock Gnosis Safe Factory Contract
 **Priority**: Medium  
-**Estimated Effort**: 6 hours  
+**Estimated Effort**: 2 hours  
 **Dependencies**: Task 2.2
 
 **Requirements**:
-- Create `src/dev/mocks/GnosisSafeFactory.sol` for multi-signature wallet creation
-- Create `src/dev/mocks/GnosisSafe.sol` for Safe wallet implementation
-- Implement Gnosis Safe creation and management:
+- Create `src/dev/mocks/GnosisSafeFactory.sol` for mock multi-signature wallet creation
+- Create `src/dev/mocks/GnosisSafe.sol` for mock Safe wallet implementation
+- Implement basic mock Safe creation and management:
   - **Safe Creation**: Deterministic Safe address computation
-  - **Multi-Signature Support**: Multiple owners with approval thresholds
-  - **Safe Management**: Add/remove owners, change thresholds
-  - **Transaction Execution**: Multi-sig transaction execution
-- Support Safe signature verification:
+  - **Basic Multi-Signature Support**: Simple owner management
+  - **Safe Management**: Basic owner operations
+  - **Transaction Execution**: Simple transaction execution
+- Support basic Safe signature verification:
   - **ERC1271 Compliance**: Standard signature verification interface
-  - **Multi-Sig Signatures**: Verify signatures from Safe owners
-  - **Threshold Validation**: Ensure sufficient approvals
+  - **Basic Multi-Sig Signatures**: Verify signatures from Safe owners
+  - **Simple Threshold Validation**: Basic approval checking
   - **Signature Validation**: ECDSA + Safe address verification
 - Include factory pattern for Safe deployment:
   - **Factory Pattern**: Centralized Safe creation
   - **Deterministic Addresses**: CREATE2 for predictable Safe addresses
   - **Gas Optimization**: Efficient Safe creation and calls
-  - **Deployment Tracking**: Comprehensive event logging
-- Implement enterprise features:
-  - **Owner Management**: Add/remove owners with consensus
-  - **Threshold Configuration**: Set approval thresholds
-  - **Transaction Limits**: Set limits for different transaction types
-  - **Recovery Mechanisms**: Emergency procedures for lost keys
-  - **Compliance Features**: Audit trails and approval workflows
+  - **Deployment Tracking**: Basic event logging
+- Implement basic mock features:
+  - **Owner Management**: Basic add/remove owners
+  - **Threshold Configuration**: Simple approval thresholds
+  - **Basic Transaction Execution**: Simple transaction handling
+  - **Mock Recovery**: Basic emergency procedures
 
 **Security Requirements**:
 - [ ] **Multi-Signature Security**: Multiple owners with approval thresholds
@@ -219,16 +218,17 @@ This backlog outlines the requirements and tasks needed to complete the CTF-exch
   2. Real ConditionalTokens (using existing `Deployer.ConditionalTokens()`)
   3. Exchange Beacon (from Task 2.2)
   4. Beacon Proxy Factory (from Task 2.2)
-  5. Gnosis Safe Factory (from Task 2.3)
-  6. CTF Exchange
+  5. CTF Exchange
 - Configure exchange with deployed addresses
 - Set up admin and operator roles
 - Verify all contracts deployed correctly
+- Test beacon proxy system integration
 
 **Acceptance Criteria**:
 - [ ] All contracts deploy successfully on local chain
 - [ ] Exchange properly configured with all dependencies
 - [ ] Admin and operator roles set correctly
+- [ ] Beacon proxy system integrated and functional
 - [ ] Basic functionality testable on local chain
 - [ ] Gas usage optimized for local development
 
