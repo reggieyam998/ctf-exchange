@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.15;
 
-import { Script } from "forge-std/Script.sol";
+import { Test } from "forge-std/Test.sol";
 import { console } from "forge-std/console.sol";
 import { CTFExchange } from "src/exchange/CTFExchange.sol";
 import { USDC } from "src/dev/mocks/USDC.sol";
@@ -13,15 +13,11 @@ import { MockBeaconImplementation } from "src/dev/mocks/MockBeaconImplementation
 import { MockGnosisSafeFactory } from "src/dev/mocks/MockGnosisSafeFactory.sol";
 import { Order, Side, MatchType, OrderStatus, SignatureType } from "src/exchange/libraries/OrderStructs.sol";
 import { IERC20 } from "openzeppelin-contracts/token/ERC20/IERC20.sol";
+import { IERC1155 } from "openzeppelin-contracts/token/ERC1155/IERC1155.sol";
 
-/// @title LocalTestingScript
-/// @notice Comprehensive local testing script for CTF Exchange functionality
-contract LocalTestingScript is Script {
-    // Environment variables
-    string public PK;
-    string public ADMIN;
-    string public RPC_URL;
-
+/// @title LocalTesting
+/// @notice Comprehensive local testing for CTF Exchange functionality
+contract LocalTesting is Test {
     // Deployed contracts
     USDC public usdc;
     IConditionalTokens public ctf;
@@ -49,43 +45,248 @@ contract LocalTestingScript is Script {
     uint256 public constant ORDER_AMOUNT = 50_000_000; // 50 USDC
     uint256 public constant FEE_RATE_BPS = 30; // 0.3%
 
-    function run() public {
-        console.log("=== Starting Local Testing Script ===");
+    function setUp() public {
+        console.log("=== Setting Up Local Testing Environment ===");
         
-        // Load environment variables
-        PK = vm.envString("PK");
-        ADMIN = vm.envString("ADMIN");
-        RPC_URL = vm.envString("RPC_URL");
-        
-        uint256 deployerPrivateKey = vm.parseUint(PK);
-        admin = vm.parseAddress(ADMIN);
-
         // Setup test addresses
+        admin = vm.addr(0x1);
         bob = vm.addr(0xB0B);
         carla = vm.addr(0xCA414);
         henry = vm.addr(0x123456);
         brian = vm.addr(0x789ABC);
-
-        vm.startBroadcast(deployerPrivateKey);
 
         // Deploy all contracts
         _deployContracts();
         
         // Setup exchange
         _setupExchange();
-
-        vm.stopBroadcast();
-
-        console.log("\n=== Deployment Complete ===");
-        console.log("All contracts deployed and configured successfully!");
-        console.log("Ready for testing on local chain.");
         
-        // Note: Testing functions would be run separately in a test environment
-        // where vm.prank can be used without broadcast restrictions
-        
-        console.log("\n=== All Tests Passed! ===");
+        console.log("=== Setup Complete ===");
     }
 
+    function testTokenRegistration() public {
+        console.log("\n--- Testing Token Registration ---");
+        
+        // Verify tokens are registered
+        require(exchange.getCollateral() == address(usdc), "Collateral not set correctly");
+        require(exchange.getCtf() == address(ctf), "CTF not set correctly");
+        console.log("Token registration verified");
+        
+        // Test condition preparation
+        bytes32 testQuestionId = keccak256("test-question-2");
+        address testOracle = henry;
+        
+        ctf.prepareCondition(testOracle, testQuestionId, 3);
+        bytes32 testConditionId = ctf.getConditionId(testOracle, testQuestionId, 3);
+        console.log("Additional condition prepared:", vm.toString(testConditionId));
+        
+        console.log("Token registration test passed!");
+    }
+
+    function testOrderCreationAndSigning() public {
+        console.log("\n--- Testing Order Creation and Signing ---");
+        
+        // Test EOA signature
+        Order memory order = _createAndSignOrder(bob, yes, ORDER_AMOUNT, ORDER_AMOUNT * 2, Side.BUY);
+        console.log("EOA order created and signed");
+        
+        // Verify order signature
+        exchange.validateOrderSignature(exchange.hashOrder(order), order);
+        console.log("EOA signature verified");
+        
+        // Test order with fees
+        Order memory feeOrder = _createAndSignOrderWithFee(bob, yes, ORDER_AMOUNT, ORDER_AMOUNT * 2, FEE_RATE_BPS, Side.BUY);
+        console.log("Order with fees created and signed");
+        
+        // Test different order types
+        Order memory sellOrder = _createAndSignOrder(carla, no, ORDER_AMOUNT, ORDER_AMOUNT * 2, Side.SELL);
+        console.log("Sell order created and signed");
+        
+        console.log("Order creation and signing test passed!");
+    }
+
+    function testOrderMatchingAndExecution() public {
+        console.log("\n--- Testing Order Matching and Execution ---");
+        
+        // Create buy and sell orders
+        Order memory buyOrder = _createAndSignOrder(bob, yes, ORDER_AMOUNT, ORDER_AMOUNT * 2, Side.BUY);
+        Order memory sellOrder = _createAndSignOrder(carla, yes, ORDER_AMOUNT, ORDER_AMOUNT * 2, Side.SELL);
+        
+        // Test single order fill
+        vm.prank(carla);
+        exchange.fillOrder(buyOrder, ORDER_AMOUNT);
+        console.log("Single order fill successful");
+        
+        // Test order matching
+        Order[] memory makerOrders = new Order[](1);
+        makerOrders[0] = sellOrder;
+        
+        uint256[] memory makerFillAmounts = new uint256[](1);
+        makerFillAmounts[0] = ORDER_AMOUNT;
+        
+        Order memory takerOrder = _createAndSignOrder(henry, yes, ORDER_AMOUNT, ORDER_AMOUNT * 2, Side.BUY);
+        
+        vm.prank(henry);
+        exchange.matchOrders(takerOrder, makerOrders, ORDER_AMOUNT, makerFillAmounts);
+        console.log("Order matching successful");
+        
+        console.log("Order matching and execution test passed!");
+    }
+
+    function testFeeCalculation() public {
+        console.log("\n--- Testing Fee Calculation ---");
+        
+        // Create order with fees
+        Order memory feeOrder = _createAndSignOrderWithFee(bob, yes, ORDER_AMOUNT, ORDER_AMOUNT * 2, FEE_RATE_BPS, Side.BUY);
+        
+        // Calculate expected fee
+        uint256 expectedFee = (ORDER_AMOUNT * FEE_RATE_BPS) / 10000;
+        console.log("Expected fee:", expectedFee);
+        
+        // Test fee order execution
+        vm.prank(carla);
+        exchange.fillOrder(feeOrder, ORDER_AMOUNT);
+        console.log("Fee order execution successful");
+        
+        console.log("Fee calculation test passed!");
+    }
+
+    function testPauseFunctionality() public {
+        console.log("\n--- Testing Pause Functionality ---");
+        
+        // Test pause
+        vm.prank(admin);
+        exchange.pauseTrading();
+        console.log("Trading paused");
+        
+        // Verify pause prevents trading
+        Order memory order = _createAndSignOrder(bob, yes, ORDER_AMOUNT, ORDER_AMOUNT * 2, Side.BUY);
+        
+        vm.expectRevert();
+        vm.prank(carla);
+        exchange.fillOrder(order, ORDER_AMOUNT);
+        console.log("Pause prevents trading - verified");
+        
+        // Test unpause
+        vm.prank(admin);
+        exchange.unpauseTrading();
+        console.log("Trading unpaused");
+        
+        // Verify trading resumes
+        vm.prank(carla);
+        exchange.fillOrder(order, ORDER_AMOUNT);
+        console.log("Trading resumed successfully");
+        
+        console.log("Pause functionality test passed!");
+    }
+
+    function testAuthFunctionality() public {
+        console.log("\n--- Testing Auth Functionality ---");
+        
+        // Test admin functions
+        require(exchange.isAdmin(admin), "Admin should be admin");
+        require(exchange.isOperator(admin), "Admin should be operator");
+        require(exchange.isOperator(bob), "Bob should be operator");
+        require(exchange.isOperator(carla), "Carla should be operator");
+        console.log("Admin roles verified");
+        
+        // Test adding new admin
+        vm.prank(admin);
+        exchange.addAdmin(henry);
+        require(exchange.isAdmin(henry), "Henry should be admin");
+        console.log("New admin added successfully");
+        
+        // Test removing admin
+        vm.prank(admin);
+        exchange.removeAdmin(henry);
+        require(!exchange.isAdmin(henry), "Henry should not be admin");
+        console.log("Admin removed successfully");
+        
+        console.log("Auth functionality test passed!");
+    }
+
+    function testBeaconProxyIntegration() public {
+        console.log("\n--- Testing Beacon Proxy Integration ---");
+        
+        // Test beacon functionality
+        address currentImpl = beacon.implementation();
+        require(currentImpl == address(mockImpl), "Beacon implementation mismatch");
+        console.log("Beacon implementation verified");
+        
+        // Test factory functionality
+        address factoryBeacon = beaconFactory.getBeacon();
+        require(factoryBeacon == address(beacon), "Factory beacon mismatch");
+        console.log("Factory beacon verified");
+        
+        // Test proxy creation prediction
+        address testOwner = vm.addr(999);
+        bytes32 testSalt = keccak256("test-salt");
+        
+        address predictedProxy = beaconFactory.predictProxyAddress(testOwner, testSalt);
+        console.log("Predicted proxy address:", predictedProxy);
+        
+        // Test that proxy doesn't exist yet
+        bool proxyExists = beaconFactory.proxyExists(testOwner, testSalt);
+        require(!proxyExists, "Proxy should not exist yet");
+        console.log("Proxy existence check passed");
+        
+        console.log("Beacon proxy integration test passed!");
+    }
+
+    function testSafeFactoryIntegration() public {
+        console.log("\n--- Testing Safe Factory Integration ---");
+        
+        // Test safe factory functionality
+        address masterCopy = safeFactory.masterCopy();
+        console.log("Safe factory master copy:", masterCopy);
+        
+        // Test safe creation
+        address testOwner = vm.addr(888);
+        address createdSafe = safeFactory.createSafe(testOwner);
+        console.log("Safe created for owner:", createdSafe);
+        
+        // Test safe address prediction
+        address predictedSafe = safeFactory.predictSafeAddress(testOwner);
+        console.log("Predicted safe address:", predictedSafe);
+        
+        console.log("Safe factory integration test passed!");
+    }
+
+    function testCompleteExchangeWorkflow() public {
+        console.log("\n--- Testing Complete Exchange Workflow ---");
+        
+        // 1. Create orders
+        Order memory buyOrder = _createAndSignOrder(bob, yes, ORDER_AMOUNT, ORDER_AMOUNT * 2, Side.BUY);
+        Order memory sellOrder = _createAndSignOrder(carla, yes, ORDER_AMOUNT, ORDER_AMOUNT * 2, Side.SELL);
+        
+        // 2. Execute trades
+        vm.prank(carla);
+        exchange.fillOrder(buyOrder, ORDER_AMOUNT);
+        console.log("Buy order executed");
+        
+        vm.prank(bob);
+        exchange.fillOrder(sellOrder, ORDER_AMOUNT);
+        console.log("Sell order executed");
+        
+        // 3. Test pause/unpause
+        vm.prank(admin);
+        exchange.pauseTrading();
+        console.log("Trading paused");
+        
+        vm.prank(admin);
+        exchange.unpauseTrading();
+        console.log("Trading unpaused");
+        
+        // 4. Test with fees
+        Order memory feeOrder = _createAndSignOrderWithFee(henry, yes, ORDER_AMOUNT, ORDER_AMOUNT * 2, FEE_RATE_BPS, Side.BUY);
+        vm.prank(brian);
+        exchange.fillOrder(feeOrder, ORDER_AMOUNT);
+        console.log("Fee order executed");
+        
+        console.log("Complete exchange workflow test passed!");
+    }
+
+    // Helper functions
     function _deployContracts() internal {
         console.log("\n--- Deploying Contracts ---");
         
@@ -156,198 +357,14 @@ contract LocalTestingScript is Script {
         _mintTestTokens(bob, address(exchange), INITIAL_BALANCE);
         _mintTestTokens(carla, address(exchange), INITIAL_BALANCE);
         _mintTestTokens(henry, address(exchange), INITIAL_BALANCE);
+        _mintTestTokens(brian, address(exchange), INITIAL_BALANCE);
         console.log("Initial balances minted");
+        
+        // Approve exchange to transfer ERC1155 tokens
+        _approveERC1155ForExchange();
+        console.log("ERC1155 approvals completed");
     }
 
-    function _testTokenRegistration() internal {
-        console.log("\n--- Testing Token Registration ---");
-        
-        // Verify tokens are registered
-        require(exchange.getCollateral() == address(usdc), "Collateral not set correctly");
-        require(exchange.getCtf() == address(ctf), "CTF not set correctly");
-        console.log("Token registration verified");
-        
-        // Test condition preparation
-        bytes32 testQuestionId = keccak256("test-question-2");
-        address testOracle = henry;
-        
-        ctf.prepareCondition(testOracle, testQuestionId, 3);
-        bytes32 testConditionId = ctf.getConditionId(testOracle, testQuestionId, 3);
-        console.log("Additional condition prepared:", vm.toString(testConditionId));
-        
-        console.log("Token registration test passed!");
-    }
-
-    function _testOrderCreationAndSigning() internal {
-        console.log("\n--- Testing Order Creation and Signing ---");
-        
-        // Test EOA signature
-        Order memory order = _createAndSignOrder(bob, yes, ORDER_AMOUNT, ORDER_AMOUNT * 2, Side.BUY);
-        console.log("EOA order created and signed");
-        
-        // Verify order signature
-        exchange.validateOrderSignature(exchange.hashOrder(order), order);
-        console.log("EOA signature verified");
-        
-        // Test order with fees
-        Order memory feeOrder = _createAndSignOrderWithFee(bob, yes, ORDER_AMOUNT, ORDER_AMOUNT * 2, FEE_RATE_BPS, Side.BUY);
-        console.log("Order with fees created and signed");
-        
-        // Test different order types
-        Order memory sellOrder = _createAndSignOrder(carla, no, ORDER_AMOUNT, ORDER_AMOUNT * 2, Side.SELL);
-        console.log("Sell order created and signed");
-        
-        console.log("Order creation and signing test passed!");
-    }
-
-    function _testOrderMatchingAndExecution() internal {
-        console.log("\n--- Testing Order Matching and Execution ---");
-        
-        // Create buy and sell orders
-        Order memory buyOrder = _createAndSignOrder(bob, yes, ORDER_AMOUNT, ORDER_AMOUNT * 2, Side.BUY);
-        Order memory sellOrder = _createAndSignOrder(carla, yes, ORDER_AMOUNT, ORDER_AMOUNT * 2, Side.SELL);
-        
-        // Test single order fill
-        vm.prank(carla);
-        exchange.fillOrder(buyOrder, ORDER_AMOUNT);
-        console.log("Single order fill successful");
-        
-        // Test order matching
-        Order[] memory makerOrders = new Order[](1);
-        makerOrders[0] = sellOrder;
-        
-        uint256[] memory makerFillAmounts = new uint256[](1);
-        makerFillAmounts[0] = ORDER_AMOUNT;
-        
-        Order memory takerOrder = _createAndSignOrder(henry, yes, ORDER_AMOUNT, ORDER_AMOUNT * 2, Side.BUY);
-        
-        vm.prank(henry);
-        exchange.matchOrders(takerOrder, makerOrders, ORDER_AMOUNT, makerFillAmounts);
-        console.log("Order matching successful");
-        
-        console.log("Order matching and execution test passed!");
-    }
-
-    function _testFeeCalculation() internal {
-        console.log("\n--- Testing Fee Calculation ---");
-        
-        // Create order with fees
-        Order memory feeOrder = _createAndSignOrderWithFee(bob, yes, ORDER_AMOUNT, ORDER_AMOUNT * 2, FEE_RATE_BPS, Side.BUY);
-        
-        // Calculate expected fee
-        uint256 expectedFee = (ORDER_AMOUNT * FEE_RATE_BPS) / 10000;
-        console.log("Expected fee:", expectedFee);
-        
-        // Test fee order execution
-        vm.prank(carla);
-        exchange.fillOrder(feeOrder, ORDER_AMOUNT);
-        console.log("Fee order execution successful");
-        
-        console.log("Fee calculation test passed!");
-    }
-
-    function _testPauseFunctionality() internal {
-        console.log("\n--- Testing Pause Functionality ---");
-        
-        // Test pause
-        vm.prank(admin);
-        exchange.pauseTrading();
-        console.log("Trading paused");
-        
-        // Verify pause prevents trading
-        Order memory order = _createAndSignOrder(bob, yes, ORDER_AMOUNT, ORDER_AMOUNT * 2, Side.BUY);
-        
-        vm.expectRevert();
-        vm.prank(carla);
-        exchange.fillOrder(order, ORDER_AMOUNT);
-        console.log("Pause prevents trading - verified");
-        
-        // Test unpause
-        vm.prank(admin);
-        exchange.unpauseTrading();
-        console.log("Trading unpaused");
-        
-        // Verify trading resumes
-        vm.prank(carla);
-        exchange.fillOrder(order, ORDER_AMOUNT);
-        console.log("Trading resumed successfully");
-        
-        console.log("Pause functionality test passed!");
-    }
-
-    function _testAuthFunctionality() internal {
-        console.log("\n--- Testing Auth Functionality ---");
-        
-        // Test admin functions
-        require(exchange.isAdmin(admin), "Admin should be admin");
-        require(exchange.isOperator(admin), "Admin should be operator");
-        require(exchange.isOperator(bob), "Bob should be operator");
-        require(exchange.isOperator(carla), "Carla should be operator");
-        console.log("Admin roles verified");
-        
-        // Test adding new admin
-        vm.prank(admin);
-        exchange.addAdmin(henry);
-        require(exchange.isAdmin(henry), "Henry should be admin");
-        console.log("New admin added successfully");
-        
-        // Test removing admin
-        vm.prank(admin);
-        exchange.removeAdmin(henry);
-        require(!exchange.isAdmin(henry), "Henry should not be admin");
-        console.log("Admin removed successfully");
-        
-        console.log("Auth functionality test passed!");
-    }
-
-    function _testBeaconProxyIntegration() internal {
-        console.log("\n--- Testing Beacon Proxy Integration ---");
-        
-        // Test beacon functionality
-        address currentImpl = beacon.implementation();
-        require(currentImpl == address(mockImpl), "Beacon implementation mismatch");
-        console.log("Beacon implementation verified");
-        
-        // Test factory functionality
-        address factoryBeacon = beaconFactory.getBeacon();
-        require(factoryBeacon == address(beacon), "Factory beacon mismatch");
-        console.log("Factory beacon verified");
-        
-        // Test proxy creation prediction
-        address testOwner = vm.addr(999);
-        bytes32 testSalt = keccak256("test-salt");
-        
-        address predictedProxy = beaconFactory.predictProxyAddress(testOwner, testSalt);
-        console.log("Predicted proxy address:", predictedProxy);
-        
-        // Test that proxy doesn't exist yet
-        bool proxyExists = beaconFactory.proxyExists(testOwner, testSalt);
-        require(!proxyExists, "Proxy should not exist yet");
-        console.log("Proxy existence check passed");
-        
-        console.log("Beacon proxy integration test passed!");
-    }
-
-    function _testSafeFactoryIntegration() internal {
-        console.log("\n--- Testing Safe Factory Integration ---");
-        
-        // Test safe factory functionality
-        address masterCopy = safeFactory.masterCopy();
-        console.log("Safe factory master copy:", masterCopy);
-        
-        // Test safe creation
-        address testOwner = vm.addr(888);
-        address createdSafe = safeFactory.createSafe(testOwner);
-        console.log("Safe created for owner:", createdSafe);
-        
-        // Test safe address prediction
-        address predictedSafe = safeFactory.predictSafeAddress(testOwner);
-        console.log("Predicted safe address:", predictedSafe);
-        
-        console.log("Safe factory integration test passed!");
-    }
-
-    // Helper functions
     function _getPositionId(uint256 indexSet) internal view returns (uint256) {
         return ctf.getPositionId(IERC20(address(usdc)), ctf.getCollectionId(bytes32(0), conditionId, indexSet));
     }
@@ -356,6 +373,20 @@ contract LocalTestingScript is Script {
         usdc.mint(to, amount);
         vm.prank(to);
         usdc.approve(exchangeAddress, amount);
+    }
+    
+    function _approveERC1155ForExchange() internal {
+        // Approve exchange to transfer ERC1155 tokens for all test users
+        address[] memory users = new address[](4);
+        users[0] = bob;
+        users[1] = carla;
+        users[2] = henry;
+        users[3] = brian;
+        
+        for (uint256 i = 0; i < users.length; i++) {
+            vm.prank(users[i]);
+            IERC1155(address(ctf)).setApprovalForAll(address(exchange), true);
+        }
     }
 
     function _createOrder(address maker, uint256 tokenId, uint256 makerAmount, uint256 takerAmount, Side side) internal view returns (Order memory) {
