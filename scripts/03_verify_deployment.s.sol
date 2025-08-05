@@ -7,8 +7,9 @@ import { CTFExchange } from "src/exchange/CTFExchange.sol";
 import { USDC } from "src/dev/mocks/USDC.sol";
 import { IConditionalTokens } from "src/exchange/interfaces/IConditionalTokens.sol";
 
-/// @title VerifyDeployment
+/// @title Deployment Verification Script
 /// @notice Script to verify that all contracts are deployed and accessible
+/// @dev Checks contract addresses and basic functionality
 contract VerifyDeployment is Script {
     // Deployed contract addresses (from previous deployment)
     address public constant USDC_ADDRESS = 0x02a52E2DEf2f62D98c5662614CE707104eF01bc9;

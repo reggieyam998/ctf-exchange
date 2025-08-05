@@ -12,8 +12,9 @@ import { PolymarketCompatibleProxyFactory } from "src/dev/mocks/PolymarketCompat
 import { MockBeaconImplementation } from "src/dev/mocks/MockBeaconImplementation.sol";
 import { EnhancedGnosisSafeFactory } from "src/dev/mocks/EnhancedGnosisSafeFactory.sol";
 
-/// @title Polymarket-Compatible Deployment Script
-/// @notice Deploys all contracts using Polymarket-compatible patterns with our improvements
+/// @title Testnet Polymarket-Compatible Deployment Script
+/// @notice Deploys all contracts using Polymarket-compatible patterns for testnet deployment
+/// @dev Uses environment variables for testnet configuration
 contract PolymarketCompatibleDeployment is Script {
     // Environment variables
     string public PK;

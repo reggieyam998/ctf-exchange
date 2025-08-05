@@ -12,6 +12,7 @@ This knowledge base documents the architecture, design decisions, and implementa
 4. [Signature Types](#signature-types)
 5. [Upgrade Mechanisms](#upgrade-mechanisms)
 6. [Security Considerations](#security-considerations)
+7. [Fee Collection System](#fee-collection-system)
 
 ---
 
@@ -622,4 +623,223 @@ The beacon pattern approach provides a **superior solution** to the upgrade prob
 - ✅ **Enterprise Ready**: Supports both individual and institutional users
 - ✅ **Future Proof**: Scalable architecture for long-term growth
 
-This architecture ensures that **market contract upgrades don't break user experience** and provides **enterprise-grade upgrade capabilities** for the CTF exchange. 
+This architecture ensures that **market contract upgrades don't break user experience** and provides **enterprise-grade upgrade capabilities** for the CTF exchange.
+
+---
+
+## Fee Collection System
+
+### Overview
+
+The CTF Exchange implements a sophisticated fee collection system that ensures both BUY and SELL sides pay fees to the operator while maintaining market integrity through symmetric fee calculations.
+
+### Fee Structure
+
+#### Fee Rate Configuration:
+- **Base Fee Rate**: Configurable basis points (typically 2% = 200 bps)
+- **Maximum Fee Rate**: 1000 basis points (10%) as defined in `Fees.sol`
+- **Fee Recipient**: Operator (the party calling trading functions)
+
+#### Fee Calculation by Side:
+
+**BUY Side (receiving outcome tokens):**
+```solidity
+// Fee charged on Token Proceeds (outcome tokens)
+fee = (feeRateBps * min(price, 1-price) * outcomeTokens) / (price * BPS_DIVISOR);
+```
+
+**SELL Side (receiving collateral):**
+```solidity
+// Fee charged on Collateral proceeds (USDC)
+fee = feeRateBps * min(price, 1-price) * outcomeTokens / (BPS_DIVISOR * ONE);
+```
+
+### Fee Collection Process
+
+#### 1. Fee Calculation
+```solidity
+// From CalculatorHelper.sol
+function calculateFee(
+    uint256 feeRateBps,
+    uint256 outcomeTokens,
+    uint256 makerAmount,
+    uint256 takerAmount,
+    Side side
+) internal pure returns (uint256 fee)
+```
+
+#### 2. Fee Deduction
+```solidity
+// From Trading.sol
+// Transfer order proceeds minus fees from msg.sender to order maker
+_transfer(msg.sender, order.maker, takerAssetId, taking - fee);
+```
+
+#### 3. Fee Transfer to Operator
+```solidity
+// From Trading.sol
+_chargeFee(address(this), msg.sender, takerAssetId, fee);
+```
+
+#### 4. Event Emission
+```solidity
+// From Trading.sol
+emit FeeCharged(receiver, tokenId, fee);
+```
+
+### Asset Format by Trade Type
+
+#### BUY Orders (receiving outcome tokens):
+- **Fee Asset**: Outcome tokens
+- **Example**: Buy 100 tokens @ $0.50, pay 2% = 2 outcome tokens
+- **Net Receive**: 98 outcome tokens
+
+#### SELL Orders (receiving collateral):
+- **Fee Asset**: Collateral (USDC)
+- **Example**: Sell 100 tokens @ $0.50, receive 50 USDC, pay 2% = 1 USDC
+- **Net Receive**: 49 USDC
+
+### Symmetric Fee Design
+
+#### Purpose:
+Fees are designed to be symmetric for complementary tokens (A and A') to preserve market integrity.
+
+#### Implementation:
+```solidity
+// Uses min(price, 1-price) to ensure symmetry
+uint256 price = _calculatePrice(makerAmount, takerAmount, side);
+fee = feeRateBps * min(price, ONE - price) * outcomeTokens / (BPS_DIVISOR * ONE);
+```
+
+#### Benefits:
+- ✅ **Market Integrity**: Prevents arbitrage between complementary positions
+- ✅ **Fair Pricing**: Equal fee burden for equivalent positions
+- ✅ **Predictable Costs**: Traders can calculate fees accurately
+
+### Fee Collection Architecture
+
+```
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   Trader        │────│   Exchange      │────│   Operator      │
+│   (Pays Fee)    │    │   (Calculates)  │    │   (Receives)    │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
+         │                       │                       │
+         ▼                       ▼                       ▼
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│ Trade Proceeds  │    │ Fee Calculation │    │ Fee Collection  │
+│ - Fee Amount    │    │ (Asset-Specific)│    │ (Same Asset)    │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
+```
+
+### Key Features
+
+#### 1. Dual Asset Support:
+- **BUY**: Fees in outcome tokens
+- **SELL**: Fees in collateral (USDC)
+
+#### 2. Operator Benefits:
+- **Liquid Assets**: Receives fees in the most liquid asset for each trade
+- **Immediate Value**: No need to convert between assets
+- **Predictable Revenue**: Clear fee structure
+
+#### 3. Trader Benefits:
+- **Transparent Pricing**: Clear fee calculation
+- **Asset Efficiency**: Pay fees in the asset they're already trading
+- **Symmetric Costs**: Fair pricing for all positions
+
+### Implementation Details
+
+#### Fee Rate Management:
+```solidity
+// From Fees.sol
+uint256 internal constant MAX_FEE_RATE_BIPS = 1000; // 10%
+
+function getMaxFeeRate() public pure override returns (uint256) {
+    return MAX_FEE_RATE_BIPS;
+}
+```
+
+#### Fee Charging Function:
+```solidity
+// From Trading.sol
+function _chargeFee(address payer, address receiver, uint256 tokenId, uint256 fee) internal {
+    if (fee > 0) {
+        _transfer(payer, receiver, tokenId, fee);
+        emit FeeCharged(receiver, tokenId, fee);
+    }
+}
+```
+
+### Example Scenarios
+
+#### Scenario 1: BUY 100 tokens @ $0.50 (2% fee)
+- **Receive**: 100 outcome tokens
+- **Fee**: 2% × 100 = 2 outcome tokens
+- **Net**: 98 outcome tokens
+- **Operator Receives**: 2 outcome tokens
+
+#### Scenario 2: SELL 100 tokens @ $0.50 (2% fee)
+- **Receive**: 50 USDC (100 × $0.50)
+- **Fee**: 2% × 50 = 1 USDC
+- **Net**: 49 USDC
+- **Operator Receives**: 1 USDC
+
+#### Scenario 3: BUY 100 tokens @ $0.10 (2% fee)
+- **Receive**: 100 outcome tokens
+- **Fee**: 2% × 100 = 2 outcome tokens
+- **Net**: 98 outcome tokens
+- **Operator Receives**: 2 outcome tokens
+
+#### Scenario 4: SELL 100 tokens @ $0.90 (2% fee)
+- **Receive**: 90 USDC (100 × $0.90)
+- **Fee**: 2% × 90 = 1.8 USDC
+- **Net**: 88.2 USDC
+- **Operator Receives**: 1.8 USDC
+
+### Best Practices
+
+#### 1. Fee Rate Configuration:
+- **Start Conservative**: Begin with lower fee rates (1-2%)
+- **Monitor Impact**: Track trading volume and user behavior
+- **Gradual Adjustment**: Increase rates gradually based on data
+
+#### 2. Operator Management:
+- **Multi-Sig Wallets**: Use multi-signature wallets for fee collection
+- **Regular Withdrawals**: Schedule regular fee withdrawals
+- **Asset Management**: Convert fees to stable assets as needed
+
+#### 3. Transparency:
+- **Clear Documentation**: Document fee structure clearly
+- **Real-Time Display**: Show fees in trading interface
+- **Historical Data**: Provide fee history and analytics
+
+### Security Considerations
+
+#### 1. Fee Rate Limits:
+- **Maximum Rate**: Hard-coded maximum of 10%
+- **Admin Controls**: Only admins can modify fee structures
+- **Audit Trail**: Log all fee rate changes
+
+#### 2. Fee Collection Security:
+- **Operator Validation**: Verify operator addresses
+- **Asset Validation**: Ensure correct asset transfers
+- **Event Logging**: Comprehensive fee event logging
+
+#### 3. Market Integrity:
+- **Symmetric Design**: Maintain fee symmetry for complementary positions
+- **Arbitrage Prevention**: Prevent fee-based arbitrage opportunities
+- **Price Impact**: Minimize fee impact on market prices
+
+---
+
+## Conclusion
+
+The fee collection system provides a **balanced approach** that benefits both traders and operators:
+
+- ✅ **Fair Pricing**: Both BUY and SELL sides pay appropriate fees
+- ✅ **Asset Efficiency**: Fees collected in the most liquid asset for each trade
+- ✅ **Market Integrity**: Symmetric design prevents arbitrage
+- ✅ **Operator Revenue**: Predictable and liquid fee collection
+- ✅ **Transparent Structure**: Clear calculation and collection process
+
+This system ensures **sustainable revenue** for the exchange operator while maintaining **fair and transparent pricing** for all traders. 

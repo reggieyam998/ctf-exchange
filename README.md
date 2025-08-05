@@ -41,6 +41,28 @@ Install [Foundry](https://github.com/foundry-rs/foundry/).
 
 Foundry has daily updates, run `foundryup` to update `forge` and `cast`.
 
+## Deployment
+
+### Local Development
+```bash
+# Deploy to local Ganache chain
+forge script scripts/01_deploy_local.s.sol --rpc-url http://localhost:7545 --broadcast --sender 0xB6f0bf48ACf3Edc3d86717B5819640dA7F078B3B
+```
+
+### Testnet Deployment
+```bash
+# Configure .env.testnet first, then deploy
+forge script scripts/02_deploy_testnet.s.sol --rpc-url <testnet-rpc> --broadcast --sender <deployer-address>
+```
+
+### Verification
+```bash
+# Verify deployment
+forge script scripts/03_verify_deployment.s.sol --rpc-url <rpc-url>
+```
+
+See [scripts/README.md](scripts/README.md) for detailed deployment documentation.
+
 ---
 
 ## Testing
@@ -58,4 +80,3 @@ Set `-vvv` to see a stack trace for a failed test.
 To install new foundry submodules: `forge install UserName/RepoName@CommitHash`
 
 To remove: `forge remove UserName/RepoName`
-

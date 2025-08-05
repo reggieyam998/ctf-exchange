@@ -6,8 +6,9 @@ import { console } from "forge-std/console.sol";
 import { Deployer } from "src/dev/util/Deployer.sol";
 import { IConditionalTokens } from "src/exchange/interfaces/IConditionalTokens.sol";
 
-/// @title TestCTFDeployment
-/// @notice Script to test CTF deployment
+/// @title CTF Testing Script
+/// @notice Script to test CTF deployment and basic functionality
+/// @dev Tests ConditionalTokens Framework deployment and core functions
 contract TestCTFDeployment is Script {
     function run() public {
         console.log("=== Testing CTF Deployment ===");
