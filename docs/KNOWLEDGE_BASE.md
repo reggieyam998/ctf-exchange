@@ -249,8 +249,13 @@ Our beacon pattern approach **addresses these limitations** while providing a **
 
 ### Current Polymarket Approach
 
-Polymarket uses a **factory-based upgrade approach**:
+Based on [Polymarket's official documentation](https://docs.polymarket.com/developers/proxy-wallet), Polymarket uses a **dual factory system**:
 
+#### **Deployed Addresses on Polygon Network**:
+- **Gnosis Safe Factory**: `0xaacfeea03eb1561c4e67d661e40682bd20e3541b` (for MetaMask users)
+- **Polymarket Proxy Factory**: `0xaB45c54AB0c941a2F231C04C3f49182e1A254052` (for MagicLink users)
+
+#### **Architecture**:
 ```solidity
 // From CTFExchange.sol
 function setProxyFactory(address _newProxyFactory) external onlyAdmin {
@@ -262,7 +267,13 @@ function setSafeFactory(address _newSafeFactory) external onlyAdmin {
 }
 ```
 
-**Limitations:**
+#### **Proxy Wallet Purpose**:
+- **Asset Storage**: Holds user positions (ERC1155) and USDC (ERC20)
+- **Atomic Transactions**: Enables multi-step transactions atomically
+- **Relayer Support**: Supports transactions via gas station network
+- **1-of-1 Multisig**: Creates single-owner multisig wallets for MetaMask users
+
+#### **Limitations**:
 - **Factory-Level Upgrades**: Admin can change factory addresses
 - **New Proxies Only**: Only new proxies use new factories/implementations
 - **Existing Proxies Unchanged**: Old proxies continue using old implementations
