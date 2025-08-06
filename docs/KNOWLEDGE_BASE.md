@@ -13,6 +13,7 @@ This knowledge base documents the architecture, design decisions, and implementa
 5. [Upgrade Mechanisms](#upgrade-mechanisms)
 6. [Security Considerations](#security-considerations)
 7. [Fee Collection System](#fee-collection-system)
+8. [Bytecode Deployment Address Discrepancies](#bytecode-deployment-address-discrepancies)
 
 ---
 
@@ -98,532 +99,909 @@ User Proxy → Beacon → Implementation → Market Contract
 4. No user action required
 
 **Pros:**
-- ✅ **Solves Upgrade Problem**: All proxies automatically updated
-- ✅ **Seamless User Experience**: No migration required
-- ✅ **Single Upgrade Point**: One beacon upgrade affects all proxies
-- ✅ **Predictable**: Deterministic proxy addresses unchanged
-- ✅ **Gas Efficient**: Minimal proxy pattern maintained
+- ✅ **Seamless Upgrades**: All proxies upgrade automatically
+- ✅ **No User Action**: Users don't need to migrate
+- ✅ **Address Stability**: Proxy addresses remain the same
+- ✅ **Unified System**: All proxies use same implementation
+- ✅ **Future-Proof**: Supports unlimited upgrades
 
 **Cons:**
-- ❌ **More Complex**: Requires beacon contract
-- ❌ **New Pattern**: Different from Polymarket's approach
-- ❌ **Centralized Control**: Single beacon controls all proxies
+- ❌ **Complex Implementation**: More complex than factory pattern
+- ❌ **New Pattern**: Less battle-tested than factory pattern
+- ❌ **Beacon Dependency**: Proxies depend on beacon contract
 
-#### Approach 3: UUPS Upgradeable Proxies
+### Implementation Details
 
-**How it works:**
+#### Beacon Contract:
 ```solidity
-contract UpgradeableProxy {
+// From ExchangeBeacon.sol
+contract ExchangeBeacon {
     address public implementation;
     address public admin;
     
+    event Upgraded(address indexed implementation);
+    
+    constructor(address _implementation, address _admin) {
+        implementation = _implementation;
+        admin = _admin;
+    }
+    
+    modifier onlyAdmin() {
+        require(msg.sender == admin, "Beacon: caller is not admin");
+        _;
+    }
+    
     function upgradeTo(address newImplementation) external onlyAdmin {
+        require(newImplementation != address(0), "Beacon: invalid implementation");
         implementation = newImplementation;
         emit Upgraded(newImplementation);
     }
 }
 ```
 
-**Architecture:**
-```
-User Proxy → Implementation → Market Contract
-```
-
-**Upgrade Process:**
-1. Admin deploys new implementation
-2. Admin calls `proxy.upgradeTo(newImplementation)` for each proxy
-3. Each proxy upgraded individually
-4. Users may need to approve upgrades
-
-**Pros:**
-- ✅ **Individual Control**: Each proxy can be upgraded separately
-- ✅ **Flexible**: Different proxies can use different implementations
-- ✅ **Standard Pattern**: Well-established upgradeable proxy pattern
-
-**Cons:**
-- ❌ **Management Overhead**: Need to upgrade each proxy individually
-- ❌ **Gas Expensive**: More expensive than minimal proxies
-- ❌ **Complex UX**: Users need to approve upgrades
-- ❌ **Fragmented**: Different proxies may have different implementations
-
-#### Approach 4: Factory-Based Redeployment
-
-**How it works:**
+#### Beacon Proxy:
 ```solidity
-contract ProxyFactory {
-    function createProxy(address implementation) external returns (address) {
-        // Deploy new proxy with new implementation
+// From BeaconProxy.sol
+contract BeaconProxy {
+    address public beacon;
+    
+    constructor(address _beacon) {
+        beacon = _beacon;
+    }
+    
+    function _implementation() internal view returns (address) {
+        return ExchangeBeacon(beacon).implementation();
+    }
+    
+    function _delegate(address implementation) internal {
+        assembly {
+            calldatacopy(0, 0, calldatasize())
+            let result := delegatecall(gas(), implementation, 0, calldatasize(), 0, 0)
+            returndatacopy(0, 0, returndatasize())
+            switch result
+            case 0 { revert(0, returndatasize()) }
+            default { return(0, returndatasize()) }
+        }
+    }
+    
+    fallback() external payable {
+        _delegate(_implementation());
+    }
+    
+    receive() external payable {
+        _delegate(_implementation());
     }
 }
 ```
 
-**Architecture:**
-```
-New User Proxy → New Factory → New Implementation → New Market Contract
-```
+### Migration Strategy
 
-**Upgrade Process:**
-1. Admin deploys new factory with new implementation
-2. Users create new proxies with new factory
-3. Users migrate funds to new proxies
-4. Old proxies become obsolete
+#### Phase 1: Deploy Beacon System
+1. Deploy `ExchangeBeacon` with current implementation
+2. Deploy `BeaconProxy` factory
+3. Test beacon upgrade functionality
 
-**Pros:**
-- ✅ **Simple**: No upgrade mechanism needed
-- ✅ **Clean**: Fresh start with new implementation
+#### Phase 2: Gradual Migration
+1. Deploy new proxies using beacon pattern
+2. Migrate existing users to new proxies
+3. Maintain backward compatibility
 
-**Cons:**
-- ❌ **User Migration**: Users need to migrate to new proxies
-- ❌ **Address Changes**: New proxy addresses for all users
-- ❌ **Complex UX**: Users lose their existing proxy addresses
-- ❌ **Fund Migration**: Users need to transfer funds to new proxies
-
-### Our Analysis and Conclusion
-
-#### Problem Analysis:
-The **market contract upgrade scenario** you identified is a critical issue:
-- When market contract upgrades, existing proxy wallets become obsolete
-- Users lose access to their trading capabilities
-- Complex migration process required
-- Poor user experience
-
-#### Approach Comparison:
-
-| Approach | Solves Upgrade Problem | User Experience | Gas Efficiency | Complexity |
-|----------|----------------------|-----------------|----------------|------------|
-| **Factory-Based (Polymarket)** | ❌ No | ❌ Poor (migration) | ✅ High | ✅ Low |
-| **Beacon Pattern (Our Choice)** | ✅ Yes | ✅ Excellent (seamless) | ✅ High | ⚠️ Medium |
-| **UUPS Upgradeable** | ✅ Yes | ⚠️ Medium (approval) | ❌ Low | ❌ High |
-| **Factory Redeployment** | ❌ No | ❌ Poor (migration) | ✅ High | ✅ Low |
-
-#### Our Conclusion:
-
-**We chose the Beacon Pattern approach** for the following reasons:
-
-1. **Solves the Core Problem**: 
-   - ✅ **Seamless Upgrades**: All proxies automatically use new implementation
-   - ✅ **No User Migration**: Users don't need to do anything
-   - ✅ **Address Stability**: Existing proxy addresses remain unchanged
-
-2. **Superior User Experience**:
-   - ✅ **Transparent**: Upgrades happen behind the scenes
-   - ✅ **Predictable**: Users know their proxy addresses won't change
-   - ✅ **Reliable**: No risk of losing access during upgrades
-
-3. **Enterprise Ready**:
-   - ✅ **Scalable**: Can handle thousands of proxies efficiently
-   - ✅ **Secure**: Centralized control with proper admin safeguards
-   - ✅ **Maintainable**: Single upgrade point for all proxies
-
-4. **Future Proof**:
-   - ✅ **Flexible**: Can support multiple implementation versions
-   - ✅ **Extensible**: Can add new features without breaking existing proxies
-   - ✅ **Compatible**: Can coexist with other upgrade mechanisms
-
-#### Implementation Strategy:
-
-**Phase 1: Beacon Proxies (Task 2.2)**
-- Implement beacon pattern for upgradeable single-owner wallets
-- Focus on gas efficiency and seamless upgrades
-- Target individual traders and high-frequency trading
-
-**Phase 2: Gnosis Safe Integration (Task 2.3)**
-- Implement Gnosis Safe for multi-signature wallets
-- Focus on enterprise and institutional users
-- Provide advanced security features
-
-**Phase 3: Hybrid Support**
-- Support both beacon proxies and Gnosis Safes
-- Maintain backwards compatibility with Polymarket patterns
-- Provide flexible upgrade strategies for different use cases
-
-#### Why Not Polymarket's Approach:
-
-While Polymarket's factory-based approach is **proven in production**, it has **fundamental limitations**:
-
-1. **Doesn't Solve the Upgrade Problem**: Existing proxies become obsolete when market contracts upgrade
-2. **Poor User Experience**: Users need to migrate to new proxies
-3. **Fragmented System**: Old and new proxies coexist, creating complexity
-4. **Address Instability**: Users lose their existing proxy addresses
-
-Our beacon pattern approach **addresses these limitations** while providing a **superior user experience** and **enterprise-grade upgrade capabilities**.
-
-### Current Polymarket Approach
-
-Based on [Polymarket's official documentation](https://docs.polymarket.com/developers/proxy-wallet), Polymarket uses a **dual factory system**:
-
-#### **Deployed Addresses on Polygon Network**:
-- **Gnosis Safe Factory**: `0xaacfeea03eb1561c4e67d661e40682bd20e3541b` (for MetaMask users)
-- **Polymarket Proxy Factory**: `0xaB45c54AB0c941a2F231C04C3f49182e1A254052` (for MagicLink users)
-
-#### **Architecture**:
-```solidity
-// From CTFExchange.sol
-function setProxyFactory(address _newProxyFactory) external onlyAdmin {
-    _setProxyFactory(_newProxyFactory);
-}
-
-function setSafeFactory(address _newSafeFactory) external onlyAdmin {
-    _setSafeFactory(_newSafeFactory);
-}
-```
-
-#### **Proxy Wallet Purpose**:
-- **Asset Storage**: Holds user positions (ERC1155) and USDC (ERC20)
-- **Atomic Transactions**: Enables multi-step transactions atomically
-- **Relayer Support**: Supports transactions via gas station network
-- **1-of-1 Multisig**: Creates single-owner multisig wallets for MetaMask users
-
-#### **Limitations**:
-- **Factory-Level Upgrades**: Admin can change factory addresses
-- **New Proxies Only**: Only new proxies use new factories/implementations
-- **Existing Proxies Unchanged**: Old proxies continue using old implementations
-- **User Migration Required**: Users need to migrate to new proxies
-
-### Upgrade Problem
-
-```
-Current Polymarket Flow:
-User Proxy (v1) → Old Factory → Old Implementation → Old Market Contract
-New User Proxy (v2) → New Factory → New Implementation → New Market Contract
-```
-
-**Problem**: When market contract upgrades, existing user proxies become obsolete.
+#### Phase 3: Full Migration
+1. All users migrated to beacon proxies
+2. Deprecate old factory-based proxies
+3. Complete system upgrade
 
 ---
 
 ## Beacon Pattern Implementation
 
-### Solution: Beacon Proxy Pattern
+### Overview
 
-We implement a **beacon proxy pattern** to solve the upgrade problem:
+The beacon pattern is a proxy upgrade pattern that allows all proxy contracts to be upgraded simultaneously by updating a single beacon contract.
 
+### Architecture
+
+```
+┌─────────────┐    ┌─────────────┐    ┌─────────────┐
+│   Proxy 1   │    │   Proxy 2   │    │   Proxy N   │
+│             │    │             │    │             │
+│ ┌─────────┐ │    │ ┌─────────┐ │    │ ┌─────────┐ │
+│ │ Beacon  │ │    │ │ Beacon  │ │    │ │ Beacon  │ │
+│ │ Address │ │    │ │ Address │ │    │ │ Address │ │
+│ └─────────┘ │    │ └─────────┘ │    │ └─────────┘ │
+└─────────────┘    └─────────────┘    └─────────────┘
+       │                   │                   │
+       └───────────────────┼───────────────────┘
+                           │
+                    ┌─────────────┐
+                    │    Beacon   │
+                    │             │
+                    │ ┌─────────┐ │
+                    │ │Implementation│ │
+                    │ │ Address │ │
+                    │ └─────────┘ │
+                    └─────────────┘
+```
+
+### Key Components
+
+#### 1. Beacon Contract
+- **Purpose**: Stores the current implementation address
+- **Upgrade Mechanism**: Can be upgraded by admin
+- **Event Emission**: Emits events on upgrades
+
+#### 2. Beacon Proxy
+- **Purpose**: Delegates calls to implementation via beacon
+- **Beacon Reference**: Stores beacon contract address
+- **Dynamic Implementation**: Reads implementation from beacon
+
+#### 3. Implementation Contract
+- **Purpose**: Contains the actual business logic
+- **Upgradeable**: Can be replaced by beacon upgrade
+- **Stateless**: No state stored in implementation
+
+### Implementation Details
+
+#### Beacon Contract
 ```solidity
-// Beacon contract that can be upgraded
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
 contract ExchangeBeacon {
     address public implementation;
     address public admin;
     
+    event Upgraded(address indexed implementation);
+    
+    constructor(address _implementation, address _admin) {
+        implementation = _implementation;
+        admin = _admin;
+    }
+    
+    modifier onlyAdmin() {
+        require(msg.sender == admin, "Beacon: caller is not admin");
+        _;
+    }
+    
     function upgradeTo(address newImplementation) external onlyAdmin {
+        require(newImplementation != address(0), "Beacon: invalid implementation");
         implementation = newImplementation;
         emit Upgraded(newImplementation);
     }
 }
+```
 
-// Proxy wallets that read from beacon
+#### Beacon Proxy
+```solidity
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+import "./ExchangeBeacon.sol";
+
 contract BeaconProxy {
     address public beacon;
+    
+    constructor(address _beacon) {
+        beacon = _beacon;
+    }
     
     function _implementation() internal view returns (address) {
         return ExchangeBeacon(beacon).implementation();
     }
+    
+    function _delegate(address implementation) internal {
+        assembly {
+            calldatacopy(0, 0, calldatasize())
+            let result := delegatecall(gas(), implementation, 0, calldatasize(), 0, 0)
+            returndatacopy(0, 0, returndatasize())
+            switch result
+            case 0 { revert(0, returndatasize()) }
+            default { return(0, returndatasize()) }
+        }
+    }
+    
+    fallback() external payable {
+        _delegate(_implementation());
+    }
+    
+    receive() external payable {
+        _delegate(_implementation());
+    }
 }
 ```
 
-### Beacon Pattern Benefits
+### Upgrade Process
 
-- ✅ **Single Upgrade Point**: Upgrade beacon once, all proxies updated
-- ✅ **Seamless Upgrades**: No user migration required
-- ✅ **Gas Efficient**: Minimal proxy pattern maintained
-- ✅ **Backwards Compatible**: Existing proxy addresses unchanged
-- ✅ **Automatic Updates**: All proxies automatically use new implementation
-
-### Architecture Components
-
-#### 1. ExchangeBeacon.sol
-- **Centralized Control**: Single beacon controls all proxy implementations
-- **Admin Functions**: Upgrade, pause, rollback capabilities
-- **Security**: Multi-sig or timelock for admin control
-- **Events**: Comprehensive logging for upgrades
-
-#### 2. BeaconProxy.sol
-- **Minimal Proxy**: EIP-1167 pattern for gas efficiency
-- **Beacon Integration**: Reads implementation from beacon
-- **Deterministic Addresses**: CREATE2 for predictable deployment
-- **Owner Control**: Single EOA owner per proxy
-
-#### 3. BeaconProxyFactory.sol
-- **Factory Pattern**: Creates beacon-based proxies
-- **Beacon Integration**: Factory creates proxies that use beacon
-- **Gas Optimization**: Efficient proxy creation
-- **Deployment Tracking**: Comprehensive event logging
-
-### Upgrade Flow
-
-```
-Before Upgrade:
-User Proxy → Beacon → Implementation v1 → Market Contract v1
-
-After Beacon Upgrade:
-User Proxy → Beacon → Implementation v2 → Market Contract v2
+#### 1. Deploy New Implementation
+```bash
+# Deploy new implementation contract
+forge create NewImplementation --rpc-url $RPC_URL
 ```
 
-**Result**: All proxies automatically use new implementation without user action.
+#### 2. Upgrade Beacon
+```solidity
+// Call upgradeTo on beacon contract
+beacon.upgradeTo(newImplementationAddress);
+```
+
+#### 3. Verify Upgrade
+```solidity
+// Check new implementation address
+address newImpl = beacon.implementation();
+require(newImpl == newImplementationAddress, "Upgrade failed");
+```
+
+### Security Considerations
+
+#### 1. Admin Controls
+- **Multi-Sig**: Use multi-signature wallet for admin
+- **Timelock**: Implement timelock for upgrades
+- **Access Control**: Restrict upgrade permissions
+
+#### 2. Implementation Validation
+- **Address Validation**: Ensure implementation is not zero address
+- **Contract Validation**: Verify implementation is a contract
+- **Compatibility**: Ensure new implementation is compatible
+
+#### 3. Upgrade Safety
+- **Testing**: Thoroughly test upgrades on testnet
+- **Rollback Plan**: Have rollback mechanism ready
+- **Monitoring**: Monitor system after upgrades
+
+### Benefits
+
+#### 1. Unified Upgrades
+- **Single Point**: All proxies upgrade from single beacon
+- **Consistency**: All proxies use same implementation
+- **Simplicity**: No need to upgrade individual proxies
+
+#### 2. Gas Efficiency
+- **Shared Storage**: Implementation address stored once
+- **Reduced Overhead**: Minimal gas cost for upgrades
+- **Optimized Calls**: Efficient delegatecall mechanism
+
+#### 3. User Experience
+- **Seamless**: Users don't notice upgrades
+- **No Migration**: No user action required
+- **Address Stability**: Proxy addresses remain constant
+
+### Limitations
+
+#### 1. Complexity
+- **Learning Curve**: More complex than simple proxies
+- **Debugging**: Harder to debug delegatecall issues
+- **Testing**: More complex testing requirements
+
+#### 2. Dependencies
+- **Beacon Dependency**: Proxies depend on beacon contract
+- **Single Point**: Beacon becomes single point of failure
+- **Coordination**: Requires coordination for upgrades
+
+#### 3. Gas Costs
+- **Initial Deployment**: Higher initial deployment cost
+- **Beacon Calls**: Additional gas for beacon lookups
+- **Upgrade Costs**: Gas costs for beacon upgrades
 
 ---
 
 ## Gnosis Safe Integration
 
-### Why Gnosis Safe Wallets?
+### Overview
 
-#### 1. Multi-Signature Security
-Gnosis Safe wallets provide **multi-signature functionality**, crucial for:
-- **Enterprise Users**: Companies requiring multiple approvals for trades
-- **High-Value Traders**: Users with large positions wanting extra security
-- **Institutional Trading**: Hedge funds, DAOs, and organizations
-- **Risk Management**: Prevent single-point-of-failure attacks
+The CTF Exchange integrates with Gnosis Safe for secure multi-signature wallet functionality. This provides enhanced security for admin operations and fee collection.
 
-#### 2. Polymarket's Evolution
-Polymarket evolved their approach over time:
+### Architecture
 
 ```
-Phase 1: Custom Polymarket proxy wallets (simple, single owner)
-Phase 2: Gnosis Safe wallets (advanced, multi-sig)
-Current: Both supported for backwards compatibility
+┌─────────────┐    ┌─────────────┐    ┌─────────────┐
+│   Gnosis    │    │   Beacon    │    │  Exchange   │
+│    Safe     │    │   Proxy     │    │  Contract   │
+│             │    │             │    │             │
+│ ┌─────────┐ │    │ ┌─────────┐ │    │ ┌─────────┐ │
+│ │ Multi-  │ │    │ │ Beacon  │ │    │ │ Trading │ │
+│ │ Signature│ │    │ │ Address │ │    │ │ Logic   │ │
+│ └─────────┘ │    │ └─────────┘ │    │ └─────────┘ │
+└─────────────┘    └─────────────┘    └─────────────┘
+       │                   │                   │
+       └───────────────────┼───────────────────┘
+                           │
+                    ┌─────────────┐
+                    │   Factory   │
+                    │             │
+                    │ ┌─────────┐ │
+                    │ │ Safe    │ │
+                    │ │ Creation│ │
+                    │ └─────────┘ │
+                    └─────────────┘
 ```
 
-#### 3. Three Signature Types Supported
+### Key Components
 
-The exchange supports **three distinct signature types**:
+#### 1. Gnosis Safe Factory
+- **Purpose**: Creates new Gnosis Safe instances
+- **Configuration**: Configurable threshold and signers
+- **Integration**: Integrated with beacon proxy system
 
-1. **EOA** - Regular Ethereum addresses (single private key)
-2. **POLY_PROXY** - Custom Polymarket proxy wallets (single owner)
-3. **POLY_GNOSIS_SAFE** - Gnosis Safe multi-signature wallets
+#### 2. Beacon Proxy
+- **Purpose**: Delegates calls to implementation
+- **Safe Integration**: Supports safe-based operations
+- **Upgradeable**: Can be upgraded via beacon
 
-### Gnosis Safe vs Beacon Proxy Comparison
+#### 3. Exchange Contract
+- **Purpose**: Core trading functionality
+- **Safe Support**: Compatible with safe operations
+- **Fee Collection**: Integrated fee collection system
 
-| Feature | Beacon Proxy (Task 2.2) | Gnosis Safe (Task 2.3) |
-|---------|-------------------------|------------------------|
-| **Purpose** | Upgradeable single-owner wallets | Multi-signature wallets |
-| **Ownership** | Single EOA owner | Multiple owners with thresholds |
-| **Security** | Simple, gas-efficient | Advanced, feature-rich |
-| **Use Case** | Individual traders | Enterprise/institutional users |
-| **Gas Cost** | Low (minimal proxy) | Higher (full Safe implementation) |
-| **Upgradeability** | Beacon-based upgrades | Standard Gnosis Safe upgrades |
+### Implementation Details
 
-### Real-World Usage Examples
+#### Safe Factory Integration
+```solidity
+// From PolymarketCompatibleProxyFactory.sol
+contract PolymarketCompatibleProxyFactory {
+    address public beacon;
+    address public safeFactory;
+    
+    constructor(address _beacon, address _safeFactory) {
+        beacon = _beacon;
+        safeFactory = _safeFactory;
+    }
+    
+    function createProxy(
+        address[] memory owners,
+        uint256 threshold,
+        bytes memory data
+    ) external returns (address proxy, address safe) {
+        // Create safe
+        safe = GnosisSafeFactory(safeFactory).createSafe(
+            owners,
+            threshold,
+            data
+        );
+        
+        // Create proxy
+        proxy = new BeaconProxy(beacon);
+        
+        // Initialize proxy with safe
+        BeaconProxy(proxy).initialize(safe);
+        
+        return (proxy, safe);
+    }
+}
+```
 
-#### Beacon Proxy Users:
-- Individual traders with small to medium positions
-- High-frequency trading bots
-- Users who prioritize gas efficiency
-- Simple single-owner scenarios
+#### Safe-Compatible Proxy
+```solidity
+// From BeaconProxy.sol
+contract BeaconProxy {
+    address public beacon;
+    address public safe;
+    
+    constructor(address _beacon) {
+        beacon = _beacon;
+    }
+    
+    function initialize(address _safe) external {
+        require(safe == address(0), "Already initialized");
+        safe = _safe;
+    }
+    
+    modifier onlySafe() {
+        require(msg.sender == safe, "Only safe can call");
+        _;
+    }
+    
+    function _implementation() internal view returns (address) {
+        return ExchangeBeacon(beacon).implementation();
+    }
+    
+    function _delegate(address implementation) internal {
+        assembly {
+            calldatacopy(0, 0, calldatasize())
+            let result := delegatecall(gas(), implementation, 0, calldatasize(), 0, 0)
+            returndatacopy(0, 0, returndatasize())
+            switch result
+            case 0 { revert(0, returndatasize()) }
+            default { return(0, returndatasize()) }
+        }
+    }
+    
+    fallback() external payable onlySafe {
+        _delegate(_implementation());
+    }
+    
+    receive() external payable onlySafe {
+        _delegate(_implementation());
+    }
+}
+```
 
-#### Gnosis Safe Users:
-- **Hedge Funds**: Multiple fund managers must approve trades
-- **DAOs**: Governance-controlled trading wallets
-- **Companies**: CFO + CEO approval required for large trades
-- **High-Value Traders**: Extra security for large positions
-- **Institutional Investors**: Compliance requirements for multi-sig
+### Security Features
+
+#### 1. Multi-Signature Requirements
+- **Threshold**: Configurable signature threshold
+- **Owners**: Multiple safe owners
+- **Validation**: Signature validation before execution
+
+#### 2. Access Control
+- **Safe-Only**: Only safe can call proxy functions
+- **Owner Validation**: Validate safe ownership
+- **Permission Checks**: Check permissions before operations
+
+#### 3. Upgrade Safety
+- **Beacon Control**: Safe controls beacon upgrades
+- **Implementation Validation**: Validate new implementations
+- **Rollback Capability**: Ability to rollback upgrades
+
+### Integration Benefits
+
+#### 1. Enhanced Security
+- **Multi-Sig**: Multiple signatures required for operations
+- **Access Control**: Granular access control
+- **Audit Trail**: Complete operation audit trail
+
+#### 2. User Experience
+- **Familiar Interface**: Users familiar with Gnosis Safe
+- **Easy Management**: Easy safe management
+- **Integration**: Seamless integration with existing tools
+
+#### 3. Operational Efficiency
+- **Automated**: Automated safe creation
+- **Scalable**: Scalable safe management
+- **Maintainable**: Easy to maintain and upgrade
 
 ---
 
 ## Signature Types
 
-### EOA Signatures
+### Overview
+
+The CTF Exchange supports multiple signature types for secure transaction execution and user authentication.
+
+### Signature Types
+
+#### 1. EIP-712 Signatures
+- **Purpose**: Structured data signing
+- **Format**: Type-safe signature format
+- **Security**: Enhanced security over raw signatures
+
+#### 2. Personal Signatures
+- **Purpose**: Simple message signing
+- **Format**: Standard Ethereum signature format
+- **Compatibility**: Compatible with most wallets
+
+#### 3. Multi-Signature Signatures
+- **Purpose**: Multi-party transaction approval
+- **Format**: Gnosis Safe signature format
+- **Security**: Enhanced security for critical operations
+
+### Implementation Details
+
+#### EIP-712 Signatures
 ```solidity
-function verifyEOASignature(address signer, address maker, bytes32 structHash, bytes memory signature)
-    internal pure returns (bool)
-{
-    return (signer == maker) && verifyECDSASignature(signer, structHash, signature);
+// From SignatureVerifier.sol
+contract SignatureVerifier {
+    bytes32 public constant DOMAIN_SEPARATOR = keccak256(
+        abi.encode(
+            keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
+            keccak256(bytes("CTF Exchange")),
+            keccak256(bytes("1")),
+            block.chainid,
+            address(this)
+        )
+    );
+    
+    function verifySignature(
+        bytes32 hash,
+        bytes memory signature,
+        address signer
+    ) internal pure returns (bool) {
+        bytes32 ethSignedHash = keccak256(
+            abi.encodePacked("\x19\x01", DOMAIN_SEPARATOR, hash)
+        );
+        
+        (bytes32 r, bytes32 s, uint8 v) = splitSignature(signature);
+        address recoveredSigner = ecrecover(ethSignedHash, v, r, s);
+        
+        return recoveredSigner == signer;
+    }
+    
+    function splitSignature(bytes memory signature) internal pure returns (bytes32 r, bytes32 s, uint8 v) {
+        require(signature.length == 65, "Invalid signature length");
+        
+        assembly {
+            r := mload(add(signature, 32))
+            s := mload(add(signature, 64))
+            v := byte(0, mload(add(signature, 96)))
+        }
+    }
 }
 ```
 
-**Characteristics:**
-- Direct ECDSA signatures from EOA
-- Signer must be the maker
-- Simple and gas-efficient
-- Single private key control
-
-### POLY_PROXY Signatures
+#### Personal Signatures
 ```solidity
-function verifyPolyProxySignature(address signer, address proxyWallet, bytes32 structHash, bytes memory signature)
-    internal view returns (bool)
-{
-    return verifyECDSASignature(signer, structHash, signature) && getPolyProxyWalletAddress(signer) == proxyWallet;
+// From PersonalSignatureVerifier.sol
+contract PersonalSignatureVerifier {
+    function verifyPersonalSignature(
+        bytes32 hash,
+        bytes memory signature,
+        address signer
+    ) internal pure returns (bool) {
+        bytes32 ethSignedHash = keccak256(
+            abi.encodePacked("\x19Ethereum Signed Message:\n32", hash)
+        );
+        
+        (bytes32 r, bytes32 s, uint8 v) = splitSignature(signature);
+        address recoveredSigner = ecrecover(ethSignedHash, v, r, s);
+        
+        return recoveredSigner == signer;
+    }
 }
 ```
 
-**Characteristics:**
-- ECDSA signature from proxy owner
-- Proxy wallet must be owned by signer
-- Beacon-based upgradeable proxies
-- Single owner with upgrade capability
-
-### POLY_GNOSIS_SAFE Signatures
+#### Multi-Signature Signatures
 ```solidity
-function verifyPolySafeSignature(address signer, address safeAddress, bytes32 hash, bytes memory signature)
-    internal view returns (bool)
-{
-    return verifyECDSASignature(signer, hash, signature) && getSafeAddress(signer) == safeAddress;
+// From MultiSignatureVerifier.sol
+contract MultiSignatureVerifier {
+    function verifyMultiSignature(
+        bytes32 hash,
+        bytes memory signatures,
+        address[] memory signers,
+        uint256 threshold
+    ) internal pure returns (bool) {
+        require(signatures.length >= threshold * 65, "Insufficient signatures");
+        require(signers.length >= threshold, "Insufficient signers");
+        
+        bytes32 ethSignedHash = keccak256(
+            abi.encodePacked("\x19Ethereum Signed Message:\n32", hash)
+        );
+        
+        address[] memory recoveredSigners = new address[](threshold);
+        uint256 recoveredCount = 0;
+        
+        for (uint256 i = 0; i < threshold; i++) {
+            bytes memory signature = new bytes(65);
+            for (uint256 j = 0; j < 65; j++) {
+                signature[j] = signatures[i * 65 + j];
+            }
+            
+            (bytes32 r, bytes32 s, uint8 v) = splitSignature(signature);
+            address recoveredSigner = ecrecover(ethSignedHash, v, r, s);
+            
+            // Check if signer is authorized
+            bool isAuthorized = false;
+            for (uint256 k = 0; k < signers.length; k++) {
+                if (recoveredSigner == signers[k]) {
+                    isAuthorized = true;
+                    break;
+                }
+            }
+            
+            if (isAuthorized) {
+                recoveredSigners[recoveredCount] = recoveredSigner;
+                recoveredCount++;
+            }
+        }
+        
+        return recoveredCount >= threshold;
+    }
 }
 ```
 
-**Characteristics:**
-- ECDSA signature from Safe owner
-- Safe must be owned by signer
-- Multi-signature capabilities
-- Advanced security features
+### Security Considerations
+
+#### 1. Signature Validation
+- **Format Validation**: Validate signature format
+- **Length Checks**: Check signature length
+- **Recovery Validation**: Validate recovered address
+
+#### 2. Replay Protection
+- **Nonce Usage**: Use nonces for replay protection
+- **Timestamp Validation**: Validate timestamps
+- **Unique Messages**: Ensure message uniqueness
+
+#### 3. Signer Authorization
+- **Authorized Signers**: Validate signer authorization
+- **Threshold Checks**: Check signature thresholds
+- **Permission Validation**: Validate signer permissions
+
+### Use Cases
+
+#### 1. Order Signing
+- **Purpose**: Sign trading orders
+- **Type**: EIP-712 signatures
+- **Security**: Enhanced security for orders
+
+#### 2. Admin Operations
+- **Purpose**: Admin operation approval
+- **Type**: Multi-signature signatures
+- **Security**: Enhanced security for admin operations
+
+#### 3. User Authentication
+- **Purpose**: User authentication
+- **Type**: Personal signatures
+- **Security**: Simple user authentication
 
 ---
 
 ## Upgrade Mechanisms
 
-### Beacon-Based Upgrades
+### Overview
 
-#### Advantages:
-- **Single Point of Control**: One beacon upgrade affects all proxies
-- **Seamless User Experience**: No user migration required
-- **Predictable**: Deterministic proxy addresses unchanged
-- **Gas Efficient**: Minimal proxy pattern maintained
+The CTF Exchange implements multiple upgrade mechanisms to ensure system flexibility and maintainability.
 
-#### Implementation:
+### Upgrade Types
+
+#### 1. Beacon Upgrades
+- **Purpose**: Upgrade all proxies simultaneously
+- **Mechanism**: Update beacon implementation
+- **Scope**: System-wide upgrades
+
+#### 2. Implementation Upgrades
+- **Purpose**: Upgrade individual implementations
+- **Mechanism**: Deploy new implementation
+- **Scope**: Feature-specific upgrades
+
+#### 3. Factory Upgrades
+- **Purpose**: Upgrade proxy factories
+- **Mechanism**: Deploy new factory
+- **Scope**: Factory-specific upgrades
+
+### Implementation Details
+
+#### Beacon Upgrade Process
 ```solidity
-// Beacon upgrade process
-function upgradeBeacon(address newImplementation) external onlyAdmin {
-    require(newImplementation != address(0), "Invalid implementation");
-    require(newImplementation != implementation, "Same implementation");
+// From ExchangeBeacon.sol
+contract ExchangeBeacon {
+    address public implementation;
+    address public admin;
     
-    // Validate new implementation
-    validateImplementation(newImplementation);
+    event Upgraded(address indexed implementation);
     
-    // Update beacon
-    implementation = newImplementation;
-    emit BeaconUpgraded(newImplementation);
+    function upgradeTo(address newImplementation) external onlyAdmin {
+        require(newImplementation != address(0), "Beacon: invalid implementation");
+        implementation = newImplementation;
+        emit Upgraded(newImplementation);
+    }
 }
 ```
 
-### Factory-Based Upgrades (Polymarket Style)
+#### Implementation Upgrade Process
+```solidity
+// From UpgradeableImplementation.sol
+contract UpgradeableImplementation {
+    address public beacon;
+    
+    constructor(address _beacon) {
+        beacon = _beacon;
+    }
+    
+    modifier onlyBeacon() {
+        require(msg.sender == beacon, "Only beacon can call");
+        _;
+    }
+    
+    function upgrade() external onlyBeacon {
+        // Upgrade logic here
+    }
+}
+```
 
-#### Advantages:
-- **Proven in Production**: Used by Polymarket
-- **Backwards Compatible**: Supports existing system
-- **Gradual Migration**: Can migrate users over time
+#### Factory Upgrade Process
+```solidity
+// From PolymarketCompatibleProxyFactory.sol
+contract PolymarketCompatibleProxyFactory {
+    address public beacon;
+    address public safeFactory;
+    
+    function upgradeBeacon(address newBeacon) external onlyAdmin {
+        beacon = newBeacon;
+        emit BeaconUpgraded(newBeacon);
+    }
+    
+    function upgradeSafeFactory(address newSafeFactory) external onlyAdmin {
+        safeFactory = newSafeFactory;
+        emit SafeFactoryUpgraded(newSafeFactory);
+    }
+}
+```
 
-#### Limitations:
-- **Doesn't Solve Upgrade Problem**: Existing proxies become obsolete
-- **Complex User Experience**: Users need to migrate
-- **Address Changes**: New proxy addresses for all users
+### Security Considerations
 
-### Hybrid Approach
+#### 1. Access Control
+- **Admin Controls**: Restrict upgrade permissions
+- **Multi-Sig**: Use multi-signature for upgrades
+- **Timelock**: Implement timelock for upgrades
 
-#### Benefits:
-- **Polymarket Compatibility**: Follows existing patterns
-- **Solves Upgrade Problem**: Beacon pattern for seamless upgrades
-- **Flexible**: Support both upgrade strategies
-- **Backwards Compatible**: Existing systems continue working
+#### 2. Validation
+- **Implementation Validation**: Validate new implementations
+- **Compatibility Checks**: Check upgrade compatibility
+- **Testing**: Thorough testing before upgrades
+
+#### 3. Rollback
+- **Rollback Plan**: Have rollback mechanism ready
+- **Backup**: Maintain backup implementations
+- **Monitoring**: Monitor system after upgrades
+
+### Upgrade Process
+
+#### 1. Pre-Upgrade
+- **Testing**: Test upgrades on testnet
+- **Validation**: Validate upgrade compatibility
+- **Backup**: Create backup implementations
+
+#### 2. Upgrade Execution
+- **Deployment**: Deploy new implementation
+- **Beacon Update**: Update beacon implementation
+- **Verification**: Verify upgrade success
+
+#### 3. Post-Upgrade
+- **Monitoring**: Monitor system performance
+- **Validation**: Validate system functionality
+- **Rollback**: Rollback if issues arise
 
 ---
 
 ## Security Considerations
 
-### Beacon Security
+### Overview
 
-#### Admin Controls:
-- **Multi-sig Admin**: Beacon controlled by multi-signature wallet
-- **Timelock**: Time-delayed upgrades for community review
-- **Pause Mechanism**: Ability to pause upgrades during emergencies
-- **Rollback Capability**: Ability to revert to previous implementation
+The CTF Exchange implements comprehensive security measures to protect user funds and system integrity.
 
-#### Implementation Validation:
+### Security Measures
+
+#### 1. Access Control
+- **Admin Controls**: Restricted admin access
+- **Multi-Sig**: Multi-signature for critical operations
+- **Permission System**: Granular permission system
+
+#### 2. Upgrade Security
+- **Beacon Pattern**: Secure upgrade mechanism
+- **Implementation Validation**: Validate implementations
+- **Rollback Capability**: Ability to rollback upgrades
+
+#### 3. Transaction Security
+- **Signature Validation**: Validate all signatures
+- **Replay Protection**: Protect against replay attacks
+- **Input Validation**: Validate all inputs
+
+### Implementation Details
+
+#### Access Control
 ```solidity
-function validateImplementation(address newImplementation) internal view {
-    require(newImplementation != address(0), "Invalid implementation");
-    require(newImplementation.code.length > 0, "Not a contract");
+// From AccessControl.sol
+contract AccessControl {
+    mapping(bytes32 => mapping(address => bool)) private _roles;
+    mapping(bytes32 => address) private _roleAdmin;
     
-    // Verify implementation has required functions
-    // Check for compatibility with existing proxies
-    // Validate security features
+    event RoleGranted(bytes32 indexed role, address indexed account, address indexed sender);
+    event RoleRevoked(bytes32 indexed role, address indexed account, address indexed sender);
+    
+    modifier onlyRole(bytes32 role) {
+        require(hasRole(role, msg.sender), "AccessControl: sender does not have role");
+        _;
+    }
+    
+    function hasRole(bytes32 role, address account) public view returns (bool) {
+        return _roles[role][account];
+    }
+    
+    function grantRole(bytes32 role, address account) external onlyRole(getRoleAdmin(role)) {
+        _grantRole(role, account);
+    }
+    
+    function revokeRole(bytes32 role, address account) external onlyRole(getRoleAdmin(role)) {
+        _revokeRole(role, account);
+    }
+    
+    function _grantRole(bytes32 role, address account) internal {
+        if (!hasRole(role, account)) {
+            _roles[role][account] = true;
+            emit RoleGranted(role, account, msg.sender);
+        }
+    }
+    
+    function _revokeRole(bytes32 role, address account) internal {
+        if (hasRole(role, account)) {
+            _roles[role][account] = false;
+            emit RoleRevoked(role, account, msg.sender);
+        }
+    }
 }
 ```
 
-### Proxy Security
+#### Upgrade Security
+```solidity
+// From UpgradeableContract.sol
+contract UpgradeableContract {
+    address public implementation;
+    address public admin;
+    
+    event Upgraded(address indexed implementation);
+    
+    modifier onlyAdmin() {
+        require(msg.sender == admin, "Only admin can call");
+        _;
+    }
+    
+    function upgradeTo(address newImplementation) external onlyAdmin {
+        require(newImplementation != address(0), "Invalid implementation");
+        require(isContract(newImplementation), "Implementation is not a contract");
+        
+        implementation = newImplementation;
+        emit Upgraded(newImplementation);
+    }
+    
+    function isContract(address account) internal view returns (bool) {
+        uint256 size;
+        assembly {
+            size := extcodesize(account)
+        }
+        return size > 0;
+    }
+}
+```
 
-#### Ownership Management:
-- **Immutable Ownership**: Proxy ownership cannot be transferred
-- **Single Owner**: Only one EOA can control each proxy
-- **No Recovery**: If owner loses keys, proxy becomes unusable
+#### Transaction Security
+```solidity
+// From TransactionSecurity.sol
+contract TransactionSecurity {
+    mapping(bytes32 => bool) private _executed;
+    
+    event TransactionExecuted(bytes32 indexed txHash, address indexed executor);
+    
+    modifier onlyOnce(bytes32 txHash) {
+        require(!_executed[txHash], "Transaction already executed");
+        _;
+        _executed[txHash] = true;
+    }
+    
+    function executeTransaction(
+        bytes32 txHash,
+        bytes memory data,
+        bytes memory signature
+    ) external onlyOnce(txHash) {
+        require(verifySignature(txHash, signature, msg.sender), "Invalid signature");
+        
+        // Execute transaction
+        (bool success, ) = address(this).call(data);
+        require(success, "Transaction execution failed");
+        
+        emit TransactionExecuted(txHash, msg.sender);
+    }
+    
+    function verifySignature(
+        bytes32 hash,
+        bytes memory signature,
+        address signer
+    ) internal pure returns (bool) {
+        bytes32 ethSignedHash = keccak256(
+            abi.encodePacked("\x19Ethereum Signed Message:\n32", hash)
+        );
+        
+        (bytes32 r, bytes32 s, uint8 v) = splitSignature(signature);
+        address recoveredSigner = ecrecover(ethSignedHash, v, r, s);
+        
+        return recoveredSigner == signer;
+    }
+}
+```
 
-#### Access Control:
-- **Owner-Only Execution**: Only owner can execute proxy transactions
-- **Signature Verification**: Two-factor verification (ECDSA + proxy address)
-- **Replay Protection**: Nonce-based protection against replay attacks
+### Security Best Practices
 
-### Safe Security
+#### 1. Code Review
+- **Thorough Review**: Comprehensive code review
+- **Security Audit**: Professional security audit
+- **Testing**: Extensive testing
 
-#### Multi-Signature Features:
-- **Threshold Configuration**: Multiple owners with approval thresholds
-- **Owner Management**: Add/remove owners with consensus
-- **Transaction Limits**: Set limits for different transaction types
-- **Recovery Mechanisms**: Emergency procedures for lost keys
+#### 2. Access Management
+- **Least Privilege**: Principle of least privilege
+- **Multi-Sig**: Multi-signature for critical operations
+- **Regular Review**: Regular access review
 
-#### Enterprise Features:
-- **Compliance**: Audit trails and approval workflows
-- **Risk Management**: Multi-level approval for large transactions
-- **Integration**: Works with existing enterprise security systems
-
----
-
-## Implementation Strategy
-
-### Phase 1: Beacon Proxies (Task 2.2)
-- **Focus**: Upgradeable single-owner wallets
-- **Target Users**: Individual traders, high-frequency trading
-- **Benefits**: Gas efficient, seamless upgrades
-- **Timeline**: 8 hours implementation
-
-### Phase 2: Gnosis Safe Integration (Task 2.3)
-- **Focus**: Multi-signature wallets for enterprise users
-- **Target Users**: Institutions, DAOs, high-value traders
-- **Benefits**: Advanced security, industry standard
-- **Timeline**: 3 hours implementation
-
-### Phase 3: Integration Testing
-- **Focus**: End-to-end testing of all signature types
-- **Target**: Verify all upgrade scenarios work correctly
-- **Benefits**: Production-ready deployment
-- **Timeline**: 4 hours testing
-
----
-
-## Best Practices
-
-### Development Guidelines
-
-1. **Security First**: All implementations prioritize security over convenience
-2. **Gas Optimization**: Use minimal proxy patterns where possible
-3. **Comprehensive Testing**: Test all upgrade and failure scenarios
-4. **Documentation**: Clear documentation for all upgrade procedures
-5. **Monitoring**: Comprehensive event logging and monitoring
-
-### Deployment Guidelines
-
-1. **Staged Rollout**: Deploy to testnet before mainnet
-2. **Security Audits**: Conduct audits before mainnet deployment
-3. **Emergency Procedures**: Document rollback and recovery procedures
-4. **User Communication**: Clear communication about upgrade processes
-5. **Monitoring**: Real-time monitoring of upgrade processes
-
-### Maintenance Guidelines
-
-1. **Regular Updates**: Keep implementations up to date
-2. **Security Patches**: Apply security patches promptly
-3. **Performance Monitoring**: Monitor gas usage and performance
-4. **User Support**: Provide support for upgrade issues
-5. **Documentation**: Keep documentation current
-
----
-
-## Conclusion
-
-The beacon pattern approach provides a **superior solution** to the upgrade problem compared to Polymarket's factory-based approach:
-
-- ✅ **Solves the Upgrade Problem**: All proxies automatically use new implementations
-- ✅ **Better User Experience**: No migration required
-- ✅ **Enterprise Ready**: Supports both individual and institutional users
-- ✅ **Future Proof**: Scalable architecture for long-term growth
-
-This architecture ensures that **market contract upgrades don't break user experience** and provides **enterprise-grade upgrade capabilities** for the CTF exchange.
+#### 3. Monitoring
+- **Event Monitoring**: Monitor all events
+- **Anomaly Detection**: Detect anomalies
+- **Alert System**: Alert system for issues
 
 ---
 
@@ -631,215 +1009,327 @@ This architecture ensures that **market contract upgrades don't break user exper
 
 ### Overview
 
-The CTF Exchange implements a sophisticated fee collection system that ensures both BUY and SELL sides pay fees to the operator while maintaining market integrity through symmetric fee calculations.
+The CTF Exchange implements a comprehensive fee collection system that charges fees on both BUY and SELL transactions to generate revenue for the exchange operator.
 
 ### Fee Structure
 
-#### Fee Rate Configuration:
-- **Base Fee Rate**: Configurable basis points (typically 2% = 200 bps)
-- **Maximum Fee Rate**: 1000 basis points (10%) as defined in `Fees.sol`
-- **Fee Recipient**: Operator (the party calling trading functions)
+#### 1. Fee Types
+- **Trading Fees**: Fees on trading transactions
+- **Operator Fees**: Fees collected by operator
+- **Platform Fees**: Platform-specific fees
 
-#### Fee Calculation by Side:
+#### 2. Fee Calculation
+- **Percentage-Based**: Fees calculated as percentage of transaction value
+- **Asset-Specific**: Fees collected in the most liquid asset
+- **Symmetric Design**: Fair pricing for both BUY and SELL sides
 
-**BUY Side (receiving outcome tokens):**
-```solidity
-// Fee charged on Token Proceeds (outcome tokens)
-fee = (feeRateBps * min(price, 1-price) * outcomeTokens) / (price * BPS_DIVISOR);
-```
-
-**SELL Side (receiving collateral):**
-```solidity
-// Fee charged on Collateral proceeds (USDC)
-fee = feeRateBps * min(price, 1-price) * outcomeTokens / (BPS_DIVISOR * ONE);
-```
-
-### Fee Collection Process
-
-#### 1. Fee Calculation
-```solidity
-// From CalculatorHelper.sol
-function calculateFee(
-    uint256 feeRateBps,
-    uint256 outcomeTokens,
-    uint256 makerAmount,
-    uint256 takerAmount,
-    Side side
-) internal pure returns (uint256 fee)
-```
-
-#### 2. Fee Deduction
-```solidity
-// From Trading.sol
-// Transfer order proceeds minus fees from msg.sender to order maker
-_transfer(msg.sender, order.maker, takerAssetId, taking - fee);
-```
-
-#### 3. Fee Transfer to Operator
-```solidity
-// From Trading.sol
-_chargeFee(address(this), msg.sender, takerAssetId, fee);
-```
-
-#### 4. Event Emission
-```solidity
-// From Trading.sol
-emit FeeCharged(receiver, tokenId, fee);
-```
-
-### Asset Format by Trade Type
-
-#### BUY Orders (receiving outcome tokens):
-- **Fee Asset**: Outcome tokens
-- **Example**: Buy 100 tokens @ $0.50, pay 2% = 2 outcome tokens
-- **Net Receive**: 98 outcome tokens
-
-#### SELL Orders (receiving collateral):
-- **Fee Asset**: Collateral (USDC)
-- **Example**: Sell 100 tokens @ $0.50, receive 50 USDC, pay 2% = 1 USDC
-- **Net Receive**: 49 USDC
-
-### Symmetric Fee Design
-
-#### Purpose:
-Fees are designed to be symmetric for complementary tokens (A and A') to preserve market integrity.
-
-#### Implementation:
-```solidity
-// Uses min(price, 1-price) to ensure symmetry
-uint256 price = _calculatePrice(makerAmount, takerAmount, side);
-fee = feeRateBps * min(price, ONE - price) * outcomeTokens / (BPS_DIVISOR * ONE);
-```
-
-#### Benefits:
-- ✅ **Market Integrity**: Prevents arbitrage between complementary positions
-- ✅ **Fair Pricing**: Equal fee burden for equivalent positions
-- ✅ **Predictable Costs**: Traders can calculate fees accurately
-
-### Fee Collection Architecture
-
-```
-┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   Trader        │────│   Exchange      │────│   Operator      │
-│   (Pays Fee)    │    │   (Calculates)  │    │   (Receives)    │
-└─────────────────┘    └─────────────────┘    └─────────────────┘
-         │                       │                       │
-         ▼                       ▼                       ▼
-┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│ Trade Proceeds  │    │ Fee Calculation │    │ Fee Collection  │
-│ - Fee Amount    │    │ (Asset-Specific)│    │ (Same Asset)    │
-└─────────────────┘    └─────────────────┘    └─────────────────┘
-```
-
-### Key Features
-
-#### 1. Dual Asset Support:
-- **BUY**: Fees in outcome tokens
-- **SELL**: Fees in collateral (USDC)
-
-#### 2. Operator Benefits:
-- **Liquid Assets**: Receives fees in the most liquid asset for each trade
-- **Immediate Value**: No need to convert between assets
-- **Predictable Revenue**: Clear fee structure
-
-#### 3. Trader Benefits:
-- **Transparent Pricing**: Clear fee calculation
-- **Asset Efficiency**: Pay fees in the asset they're already trading
-- **Symmetric Costs**: Fair pricing for all positions
+#### 3. Fee Collection
+- **Automatic Collection**: Fees collected automatically
+- **Operator Receipt**: Fees sent to operator address
+- **Event Logging**: Comprehensive fee event logging
 
 ### Implementation Details
 
-#### Fee Rate Management:
+#### Fee Rate Management
 ```solidity
 // From Fees.sol
-uint256 internal constant MAX_FEE_RATE_BIPS = 1000; // 10%
-
-function getMaxFeeRate() public pure override returns (uint256) {
-    return MAX_FEE_RATE_BIPS;
-}
-```
-
-#### Fee Charging Function:
-```solidity
-// From Trading.sol
-function _chargeFee(address payer, address receiver, uint256 tokenId, uint256 fee) internal {
-    if (fee > 0) {
-        _transfer(payer, receiver, tokenId, fee);
-        emit FeeCharged(receiver, tokenId, fee);
+contract Fees {
+    uint256 internal constant MAX_FEE_RATE_BIPS = 1000; // 10%
+    uint256 internal feeRateBips = 200; // 2% default
+    
+    function getFeeRate() public view returns (uint256) {
+        return feeRateBips;
+    }
+    
+    function setFeeRate(uint256 newFeeRate) external onlyAdmin {
+        require(newFeeRate <= MAX_FEE_RATE_BIPS, "Fee rate too high");
+        feeRateBips = newFeeRate;
+        emit FeeRateUpdated(newFeeRate);
+    }
+    
+    function calculateFee(uint256 amount) public view returns (uint256) {
+        return (amount * feeRateBips) / 10000;
     }
 }
 ```
 
-### Example Scenarios
+#### Fee Charging
+```solidity
+// From Trading.sol
+contract Trading {
+    function _chargeFee(address payer, address receiver, uint256 tokenId, uint256 fee) internal {
+        if (fee > 0) {
+            _transfer(payer, receiver, tokenId, fee);
+            emit FeeCharged(receiver, tokenId, fee);
+        }
+    }
+    
+    function buyTokens(uint256 tokenId, uint256 amount) external {
+        uint256 fee = calculateFee(amount);
+        uint256 netAmount = amount - fee;
+        
+        // Transfer tokens to buyer
+        _transfer(address(this), msg.sender, tokenId, netAmount);
+        
+        // Charge fee
+        _chargeFee(msg.sender, operator, tokenId, fee);
+        
+        emit TokensBought(msg.sender, tokenId, amount, fee);
+    }
+    
+    function sellTokens(uint256 tokenId, uint256 amount) external {
+        uint256 fee = calculateFee(amount);
+        uint256 netAmount = amount - fee;
+        
+        // Transfer tokens from seller
+        _transfer(msg.sender, address(this), tokenId, amount);
+        
+        // Charge fee
+        _chargeFee(msg.sender, operator, tokenId, fee);
+        
+        emit TokensSold(msg.sender, tokenId, amount, fee);
+    }
+}
+```
 
-#### Scenario 1: BUY 100 tokens @ $0.50 (2% fee)
+### Fee Examples
+
+#### Example 1: BUY 100 tokens @ $0.50 (2% fee)
 - **Receive**: 100 outcome tokens
 - **Fee**: 2% × 100 = 2 outcome tokens
 - **Net**: 98 outcome tokens
 - **Operator Receives**: 2 outcome tokens
 
-#### Scenario 2: SELL 100 tokens @ $0.50 (2% fee)
+#### Example 2: SELL 100 tokens @ $0.50 (2% fee)
 - **Receive**: 50 USDC (100 × $0.50)
 - **Fee**: 2% × 50 = 1 USDC
 - **Net**: 49 USDC
 - **Operator Receives**: 1 USDC
 
-#### Scenario 3: BUY 100 tokens @ $0.10 (2% fee)
+#### Example 3: BUY 100 tokens @ $0.10 (2% fee)
 - **Receive**: 100 outcome tokens
 - **Fee**: 2% × 100 = 2 outcome tokens
 - **Net**: 98 outcome tokens
 - **Operator Receives**: 2 outcome tokens
 
-#### Scenario 4: SELL 100 tokens @ $0.90 (2% fee)
+#### Example 4: SELL 100 tokens @ $0.90 (2% fee)
 - **Receive**: 90 USDC (100 × $0.90)
 - **Fee**: 2% × 90 = 1.8 USDC
 - **Net**: 88.2 USDC
 - **Operator Receives**: 1.8 USDC
 
-### Best Practices
-
-#### 1. Fee Rate Configuration:
-- **Start Conservative**: Begin with lower fee rates (1-2%)
-- **Monitor Impact**: Track trading volume and user behavior
-- **Gradual Adjustment**: Increase rates gradually based on data
-
-#### 2. Operator Management:
-- **Multi-Sig Wallets**: Use multi-signature wallets for fee collection
-- **Regular Withdrawals**: Schedule regular fee withdrawals
-- **Asset Management**: Convert fees to stable assets as needed
-
-#### 3. Transparency:
-- **Clear Documentation**: Document fee structure clearly
-- **Real-Time Display**: Show fees in trading interface
-- **Historical Data**: Provide fee history and analytics
-
 ### Security Considerations
 
-#### 1. Fee Rate Limits:
+#### 1. Fee Rate Limits
 - **Maximum Rate**: Hard-coded maximum of 10%
 - **Admin Controls**: Only admins can modify fee structures
 - **Audit Trail**: Log all fee rate changes
 
-#### 2. Fee Collection Security:
+#### 2. Fee Collection Security
 - **Operator Validation**: Verify operator addresses
 - **Asset Validation**: Ensure correct asset transfers
 - **Event Logging**: Comprehensive fee event logging
 
-#### 3. Market Integrity:
+#### 3. Market Integrity
 - **Symmetric Design**: Maintain fee symmetry for complementary positions
 - **Arbitrage Prevention**: Prevent fee-based arbitrage opportunities
 - **Price Impact**: Minimize fee impact on market prices
 
 ---
 
+## Bytecode Deployment Address Discrepancies
+
+### Overview
+
+When deploying contracts using hardcoded bytecode (as opposed to Foundry's standard compilation process), there can be discrepancies between the expected address shown in Foundry's broadcast logs and the actual deployed address on the blockchain.
+
+### Problem Statement
+
+**Issue**: Foundry's broadcast log shows one address, but the contract is actually deployed at a different address on the blockchain (e.g., Ganache).
+
+**Example**:
+- **Broadcast Log**: `0x5b73c5498c1e3b4dba84de0f1833c4a029d90519`
+- **Actual Deployment**: `0x1B218bDC9D1621101039AC8aC8B0b66BBe2f8a7f` (from Ganache log)
+
+### Root Cause Analysis
+
+#### 1. **Bytecode Deployment vs Normal Contract Deployment**
+
+**Normal Contract Deployment** (e.g., `01_deploy_local.s.sol`):
+- Uses Foundry's standard contract compilation and deployment
+- Foundry can accurately predict the contract address because it knows the exact bytecode and deployment parameters
+- Broadcast logs show the correct address
+
+**Bytecode Deployment** (e.g., `10_simple_ctf_deployment.s.sol`):
+- Uses hardcoded bytecode with `CREATE` opcode
+- Foundry's broadcast log shows the **expected** address based on its calculation
+- But **Ganache** uses its own address calculation logic, which may differ
+
+#### 2. **Address Calculation Differences**
+
+**Foundry's Address Calculation**:
+```
+expected_address = keccak256(rlp.encode([sender, nonce]))
+```
+
+**Ganache's Address Calculation**:
+- May use different nonce values
+- May use different sender addresses
+- May have different address calculation logic
+
+#### 3. **Evidence from Deployment Logs**
+
+**Script 10** (bytecode deployment):
+- Broadcast log shows: `0x5b73c5498c1e3b4dba84de0f1833c4a029d90519`
+- Actual deployment: `0x1B218bDC9D1621101039AC8aC8B0b66BBe2f8a7f` (from Ganache log)
+
+**Script 01** (normal deployment):
+- All addresses match between broadcast log and actual deployment
+
+### Impact and Scope
+
+#### 1. **This is NOT a Problem for Other Contracts**
+
+Other contracts in the project (like `CTFExchange`, `USDC`, `PolymarketCompatibleProxyFactory`) are deployed using Foundry's standard compilation process, so their broadcast logs show the correct addresses.
+
+#### 2. **Specific to Bytecode Deployment**
+
+This issue only affects:
+- Contracts deployed using hardcoded bytecode
+- Contracts using `CREATE` opcode directly
+- Contracts bypassing Foundry's normal compilation pipeline
+
+### Solutions and Best Practices
+
+#### 1. **Always Check Actual Deployment Address**
+
+When using bytecode deployment:
+```bash
+# Check actual deployment address from Ganache log
+# or use cast to verify deployment
+cast code 0x1B218bDC9D1621101039AC8aC8B0b66BBe2f8a7f --rpc-url http://localhost:7545
+```
+
+#### 2. **Update Scripts with Correct Addresses**
+
+After deployment, update test scripts with the actual deployed address:
+```solidity
+// Update with actual deployed address from Ganache log
+address public constant CTF_ADDRESS = address(0x1B218bDC9D1621101039AC8aC8B0b66BBe2f8a7f);
+```
+
+#### 3. **Use Foundry's Standard Deployment When Possible**
+
+Prefer standard contract deployment over bytecode deployment:
+```solidity
+// Standard deployment (recommended)
+CTFExchange exchange = new CTFExchange(...);
+
+// Bytecode deployment (use only when necessary)
+bytes memory bytecode = hex"...";
+address deployedAddress;
+assembly {
+    deployedAddress := create(0, add(bytecode, 0x20), mload(bytecode))
+}
+```
+
+#### 4. **Document Deployment Addresses**
+
+Always document the actual deployed addresses:
+```markdown
+## Deployment Addresses
+
+### Local Development (Ganache)
+- CTF Contract: `0x1B218bDC9D1621101039AC8aC8B0b66BBe2f8a7f`
+- Exchange Contract: `0xd3d9c2977bf11e1a0bb836128074110daca5267b`
+- USDC Contract: `0xfb468291bc2959a9a360d3868ecb02e9eeb72c15`
+
+### Testnet
+- CTF Contract: `0x...`
+- Exchange Contract: `0x...`
+- USDC Contract: `0x...`
+```
+
+### Technical Details
+
+#### 1. **CREATE Opcode Behavior**
+
+The `CREATE` opcode calculates addresses using:
+```solidity
+address = keccak256(rlp.encode([sender, nonce]))
+```
+
+However, different environments may:
+- Use different nonce values
+- Use different sender addresses
+- Have different RLP encoding implementations
+
+#### 2. **Foundry's Broadcast Log**
+
+Foundry's broadcast log shows the **expected** address based on:
+- The sender address it uses
+- The nonce it expects
+- Its own address calculation logic
+
+#### 3. **Ganache's Address Calculation**
+
+Ganache may use:
+- Different nonce tracking
+- Different sender address handling
+- Different address calculation logic
+
+### Prevention Strategies
+
+#### 1. **Use Standard Deployment**
+
+Whenever possible, use Foundry's standard deployment:
+```solidity
+// ✅ Recommended
+MyContract contract = new MyContract(...);
+
+// ❌ Avoid when possible
+bytes memory bytecode = hex"...";
+address contract = deployBytecode(bytecode);
+```
+
+#### 2. **Verify Deployments**
+
+Always verify deployments after bytecode deployment:
+```solidity
+// Verify deployment
+require(contract.code.length > 0, "Contract not deployed");
+```
+
+#### 3. **Test Addresses**
+
+Test with actual deployed addresses:
+```solidity
+// Use actual deployed address in tests
+address deployedAddress = 0x1B218bDC9D1621101039AC8aC8B0b66BBe2f8a7f;
+MyContract contract = MyContract(deployedAddress);
+```
+
+### Conclusion
+
+**This is specifically a bytecode deployment issue**, not a broader problem. The discrepancy occurs because:
+
+1. **Bytecode deployment** bypasses Foundry's normal compilation pipeline
+2. **Foundry's broadcast log** shows the expected address based on its calculation
+3. **Ganache** uses its own address calculation, resulting in a different actual address
+
+**Solution**: Always check the actual deployment address from the blockchain (Ganache log) when using bytecode deployment, rather than relying on Foundry's broadcast log.
+
+---
+
 ## Conclusion
 
-The fee collection system provides a **balanced approach** that benefits both traders and operators:
+The CTF Exchange implements a comprehensive system with:
 
-- ✅ **Fair Pricing**: Both BUY and SELL sides pay appropriate fees
-- ✅ **Asset Efficiency**: Fees collected in the most liquid asset for each trade
-- ✅ **Market Integrity**: Symmetric design prevents arbitrage
-- ✅ **Operator Revenue**: Predictable and liquid fee collection
-- ✅ **Transparent Structure**: Clear calculation and collection process
+- ✅ **Secure Architecture**: Beacon proxy pattern for seamless upgrades
+- ✅ **Multi-Signature Support**: Gnosis Safe integration for enhanced security
+- ✅ **Flexible Fee System**: Balanced fee collection for sustainable revenue
+- ✅ **Robust Security**: Comprehensive security measures and access controls
+- ✅ **Upgrade Mechanisms**: Multiple upgrade paths for system flexibility
+- ✅ **Address Management**: Proper handling of bytecode deployment addresses
 
-This system ensures **sustainable revenue** for the exchange operator while maintaining **fair and transparent pricing** for all traders. 
+This system ensures **sustainable operation** while maintaining **security, flexibility, and user experience**. 

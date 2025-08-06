@@ -97,7 +97,7 @@ contract MarketHelpers is Script {
     }
 
     // Get market information
-    function getMarketInfo(bytes32 conditionId) external view {
+    function getMarketInfo(bytes32 conditionId) external {
         console.log("\n--- Market Information ---");
         console.log("Condition ID:", vm.toString(conditionId));
         
@@ -111,7 +111,7 @@ contract MarketHelpers is Script {
             for (uint256 i = 0; i < outcomeSlotCount; i++) {
                 uint256 payoutNumerator = ctf.payoutNumerators(conditionId, i);
                 uint256 payoutPercentage = (payoutNumerator * 100) / payoutDenominator;
-                console.log("Outcome", i, "payout:", payoutPercentage, "%");
+                console.log("Outcome", i, "payout:", payoutPercentage);
             }
         } else {
             console.log("Market is UNRESOLVED");

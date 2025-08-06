@@ -28,6 +28,6 @@ library Deployer {
 
     function ConditionalTokens() public returns (address) {
         bytes memory initcode = Json.readData("artifacts/ConditionalTokens.json", ".bytecode.object");
-        return deployBytecode(initcode, "", "");
+        return deployBytecode(initcode, "", "CTF_CONDITIONAL_TOKENS");
     }
 }
