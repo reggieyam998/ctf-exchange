@@ -213,6 +213,8 @@ library PayoutDecoderLib {
         } else if (outcomeSlotCount == 3) {
             if (priceArrayLength >= 4) {
                 return MarketType.TOTAL; // Total market with over/under/push
+            } else if (priceArrayLength >= 3) {
+                return MarketType.SPREAD; // Spread market with home/away/push
             } else {
                 return MarketType.WINNER; // Winner market with tie
             }

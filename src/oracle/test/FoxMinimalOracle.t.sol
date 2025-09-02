@@ -369,6 +369,223 @@ contract FoxMinimalOracleTest is Test {
     }
 
     /*//////////////////////////////////////////////////////////////
+                                MULTI-OUTCOME SPORTS TESTS
+    //////////////////////////////////////////////////////////////*/
+
+    function test_ProposePrice_Spread() public {
+        _createRequest();
+        
+        int256[] memory price = new int256[](3);
+        price[0] = 105; // Home score
+        price[1] = 98;  // Away score
+        price[2] = 5;   // Spread line (+5.5)
+
+        vm.prank(proposer);
+        oracle.proposePrice(REQUEST_ID, price);
+
+        FoxMinimalOracle.Request memory request = oracle.getRequest(REQUEST_ID);
+        assertEq(request.proposedPrice.length, 3);
+        assertEq(request.proposedPrice[0], 105);
+        assertEq(request.proposedPrice[1], 98);
+        assertEq(request.proposedPrice[2], 5);
+    }
+
+    function test_ProposePrice_Total() public {
+        _createRequest();
+        
+        int256[] memory price = new int256[](4);
+        price[0] = 105; // Home score
+        price[1] = 98;  // Away score
+        price[2] = 0;   // No spread
+        price[3] = 200; // Total line (over/under 200)
+
+        vm.prank(proposer);
+        oracle.proposePrice(REQUEST_ID, price);
+
+        FoxMinimalOracle.Request memory request = oracle.getRequest(REQUEST_ID);
+        assertEq(request.proposedPrice.length, 4);
+        assertEq(request.proposedPrice[3], 200);
+    }
+
+    function test_SportsMarket_AwayWin() public {
+        _createRequest();
+        
+        int256[] memory price = new int256[](2);
+        price[0] = 98;  // Home score
+        price[1] = 105; // Away score (away wins)
+
+        vm.prank(proposer);
+        oracle.proposePrice(REQUEST_ID, price);
+        _settleRequest();
+        
+        uint256[] memory expectedPayouts = new uint256[](3);
+        expectedPayouts[0] = 0; // Home Win
+        expectedPayouts[1] = 1; // Away Win
+        expectedPayouts[2] = 0; // Tie
+
+        vm.expectCall(
+            address(ctf),
+            abi.encodeWithSelector(ctf.reportPayouts.selector, QUESTION_ID, expectedPayouts)
+        );
+        
+        oracle.reportPayoutsToCTF(REQUEST_ID, QUESTION_ID, 3);
+    }
+
+    function test_SportsMarket_Tie() public {
+        _createRequest();
+        
+        int256[] memory price = new int256[](2);
+        price[0] = 100; // Home score
+        price[1] = 100; // Away score (tie)
+
+        vm.prank(proposer);
+        oracle.proposePrice(REQUEST_ID, price);
+        _settleRequest();
+        
+        uint256[] memory expectedPayouts = new uint256[](3);
+        expectedPayouts[0] = 0; // Home Win
+        expectedPayouts[1] = 0; // Away Win
+        expectedPayouts[2] = 1; // Tie
+
+        vm.expectCall(
+            address(ctf),
+            abi.encodeWithSelector(ctf.reportPayouts.selector, QUESTION_ID, expectedPayouts)
+        );
+        
+        oracle.reportPayoutsToCTF(REQUEST_ID, QUESTION_ID, 3);
+    }
+
+    function test_SportsMarket_Canceled() public {
+        _createRequest();
+        
+        int256[] memory price = new int256[](5);
+        price[0] = 0;   // Home score
+        price[1] = 0;   // Away score
+        price[2] = 0;   // Spread
+        price[3] = 0;   // Total
+        price[4] = 1;   // Canceled flag
+
+        vm.prank(proposer);
+        oracle.proposePrice(REQUEST_ID, price);
+        _settleRequest();
+        
+        // Canceled markets should split payouts equally
+        uint256[] memory expectedPayouts = new uint256[](3);
+        expectedPayouts[0] = 1; // All outcomes get 1 (split)
+        expectedPayouts[1] = 1;
+        expectedPayouts[2] = 1;
+
+        vm.expectCall(
+            address(ctf),
+            abi.encodeWithSelector(ctf.reportPayouts.selector, QUESTION_ID, expectedPayouts)
+        );
+        
+        oracle.reportPayoutsToCTF(REQUEST_ID, QUESTION_ID, 3);
+    }
+
+    function test_SpreadMarket_HomeCovers() public {
+        _createRequest();
+        
+        int256[] memory price = new int256[](3);
+        price[0] = 110; // Home score
+        price[1] = 100; // Away score
+        price[2] = 5;   // Spread line (+5.5) - Home covers
+
+        vm.prank(proposer);
+        oracle.proposePrice(REQUEST_ID, price);
+        _settleRequest();
+        
+        uint256[] memory expectedPayouts = new uint256[](3);
+        expectedPayouts[0] = 1; // Home covers
+        expectedPayouts[1] = 0; // Away covers
+        expectedPayouts[2] = 0; // Push
+
+        vm.expectCall(
+            address(ctf),
+            abi.encodeWithSelector(ctf.reportPayouts.selector, QUESTION_ID, expectedPayouts)
+        );
+        
+        oracle.reportPayoutsToCTF(REQUEST_ID, QUESTION_ID, 3);
+    }
+
+    function test_SpreadMarket_Push() public {
+        _createRequest();
+        
+        int256[] memory price = new int256[](3);
+        price[0] = 105; // Home score
+        price[1] = 100; // Away score
+        price[2] = 5;   // Spread line (exact push)
+
+        vm.prank(proposer);
+        oracle.proposePrice(REQUEST_ID, price);
+        _settleRequest();
+        
+        uint256[] memory expectedPayouts = new uint256[](3);
+        expectedPayouts[0] = 0; // Home covers
+        expectedPayouts[1] = 0; // Away covers
+        expectedPayouts[2] = 1; // Push
+
+        vm.expectCall(
+            address(ctf),
+            abi.encodeWithSelector(ctf.reportPayouts.selector, QUESTION_ID, expectedPayouts)
+        );
+        
+        oracle.reportPayoutsToCTF(REQUEST_ID, QUESTION_ID, 3);
+    }
+
+    function test_TotalMarket_Over() public {
+        _createRequest();
+        
+        int256[] memory price = new int256[](4);
+        price[0] = 110; // Home score
+        price[1] = 95;  // Away score
+        price[2] = 0;   // No spread
+        price[3] = 200; // Total line (over/under 200) - Total = 205 (over)
+
+        vm.prank(proposer);
+        oracle.proposePrice(REQUEST_ID, price);
+        _settleRequest();
+        
+        uint256[] memory expectedPayouts = new uint256[](3);
+        expectedPayouts[0] = 1; // Over
+        expectedPayouts[1] = 0; // Under
+        expectedPayouts[2] = 0; // Push
+
+        vm.expectCall(
+            address(ctf),
+            abi.encodeWithSelector(ctf.reportPayouts.selector, QUESTION_ID, expectedPayouts)
+        );
+        
+        oracle.reportPayoutsToCTF(REQUEST_ID, QUESTION_ID, 3);
+    }
+
+    function test_TotalMarket_Push() public {
+        _createRequest();
+        
+        int256[] memory price = new int256[](4);
+        price[0] = 100; // Home score
+        price[1] = 100; // Away score
+        price[2] = 0;   // No spread
+        price[3] = 200; // Total line (exact push)
+
+        vm.prank(proposer);
+        oracle.proposePrice(REQUEST_ID, price);
+        _settleRequest();
+        
+        uint256[] memory expectedPayouts = new uint256[](3);
+        expectedPayouts[0] = 0; // Over
+        expectedPayouts[1] = 0; // Under
+        expectedPayouts[2] = 1; // Push
+
+        vm.expectCall(
+            address(ctf),
+            abi.encodeWithSelector(ctf.reportPayouts.selector, QUESTION_ID, expectedPayouts)
+        );
+        
+        oracle.reportPayoutsToCTF(REQUEST_ID, QUESTION_ID, 3);
+    }
+
+    /*//////////////////////////////////////////////////////////////
                                 ADMIN TESTS
     //////////////////////////////////////////////////////////////*/
 
