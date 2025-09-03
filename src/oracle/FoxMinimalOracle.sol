@@ -265,7 +265,7 @@ contract FoxMinimalOracle is Ownable, ReentrancyGuard {
         request.settled = true;
 
         // Handle bond distribution
-        _distributeBonds(requestId, request, wasDisputed);
+        _distributeBonds(request, wasDisputed);
 
         emit PriceSettled(requestId, priceToUse, wasDisputed, block.timestamp);
     }
@@ -347,10 +347,9 @@ contract FoxMinimalOracle is Ownable, ReentrancyGuard {
     //////////////////////////////////////////////////////////////*/
 
     /// @notice Distribute bonds after settlement
-    /// @param requestId The request ID
     /// @param request The request struct
     /// @param wasDisputed Whether the request was disputed
-    function _distributeBonds(bytes32 requestId, Request storage request, bool wasDisputed) internal {
+    function _distributeBonds(Request storage request, bool wasDisputed) internal {
         if (wasDisputed) {
             // For disputed requests, bonds go to admin (owner)
             bondToken.transfer(owner(), bondToken.balanceOf(address(this)));
